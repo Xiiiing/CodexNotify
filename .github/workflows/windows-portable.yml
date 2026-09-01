@@ -1,0 +1,63 @@
+name: Windows portable
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: apps/desktop
+        run: npm ci
+
+      - name: Build release Hook and stage sidecar
+        shell: pwsh
+        run: |
+          cargo build --release -p codex-notify-hook
+          $triple = rustc --print host-tuple
+          New-Item -ItemType Directory -Force apps/desktop/src-tauri/binaries | Out-Null
+          Copy-Item target/release/codex-notify-hook.exe "apps/desktop/src-tauri/binaries/codex-notify-hook-$triple.exe"
+
+      - name: Build portable desktop executable
+        working-directory: apps/desktop
+        run: npx tauri build --no-bundle
+
+      - name: Assemble portable archive
+        shell: pwsh
+        run: |
+          $output = "artifacts/CodexNotify-Windows-x64-portable"
+          New-Item -ItemType Directory -Force $output | Out-Null
+          Copy-Item target/release/codex-notify-desktop.exe "$output/CodexNotify.exe"
+          Copy-Item target/release/codex-notify-hook.exe "$output/codex-notify-hook.exe"
+          @"
+          CodexNotify Windows x64 portable
+
+          1. Keep CodexNotify.exe and codex-notify-hook.exe in the same folder.
+          2. Run CodexNotify.exe, configure Bark, then install the Hook from System.
+          3. Review and trust the Hook in Codex when prompted.
+
+          Windows 10/11 and Microsoft Edge WebView2 Runtime are required.
+          Configuration and credentials are stored in the current Windows user profile.
+          "@ | Set-Content -Encoding utf8 "$output/README.txt"
+          Compress-Archive -Path "$output/*" -DestinationPath "artifacts/CodexNotify-Windows-x64-portable.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CodexNotify-Windows-x64-portable
+          path: artifacts/CodexNotify-Windows-x64-portable.zip
+          if-no-files-found: error
+          retention-days: 30
