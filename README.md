@@ -1,6 +1,6 @@
 # CodexNotify
 
-CodexNotify is a cross-platform desktop companion that sends Codex lifecycle events to Bark. The desktop console is built with Tauri, React and TypeScript; all privileged work lives in Rust, including the standalone Codex Hook, HTTP, encryption, credential access and the persistent SQLite queue.
+CodexNotify sends Codex lifecycle events to Bark. It ships as a Tauri desktop companion for graphical systems and as a single-file Rust CLI for headless Linux. All privileged work lives in Rust, including the Codex Hook, HTTP, encryption, credential access and the persistent SQLite queue.
 
 CodexNotify 是一个跨平台桌面通知工具，通过 Bark 将 Codex 的任务完成和审批请求发送到 iPhone 与 Apple Watch。界面使用 Tauri + React + TypeScript，Hook、网络、加密、系统凭据库和 SQLite 可靠队列均由 Rust 实现。
 
@@ -16,16 +16,43 @@ Tauri desktop → Rust commands → shared core
       ├─ React console
       ├─ tray / autostart / single instance
       └─ background retry worker
+
+Headless CLI → shared core
+      ├─ configuration / diagnostics / history
+      ├─ foreground daemon retry worker
+      └─ same executable handles --codex-notify-hook
 ```
 
 The workspace contains:
 
 - `crates/codex-notify-core`: shared Rust domain logic and persistence.
 - `apps/hook`: standalone Codex command Hook.
+- `apps/cli`: single-file Linux Headless CLI and Hook.
 - `apps/desktop/src-tauri`: privileged desktop backend.
 - `apps/desktop/src`: bilingual React console.
 
-Secrets are stored under service `com.xiiiing.codex-notify` in Windows Credential Manager, macOS Keychain, or Linux Secret Service. SQLite and settings files never contain Bark or AES keys. Linux desktop sessions must provide a Secret Service implementation such as GNOME Keyring or KWallet.
+Secrets are stored under service `com.xiiiing.codex-notify` in Windows Credential Manager, macOS Keychain, or Linux Secret Service. Headless Linux can inject `CODEX_NOTIFY_BARK_KEY` and `CODEX_NOTIFY_ENCRYPTION_KEY`; environment values take priority and are never copied into settings, SQLite or logs. Linux desktop sessions should provide a Secret Service implementation such as GNOME Keyring or KWallet.
+
+## Linux editions
+
+Only two Linux downloads are published:
+
+- `CodexNotify-Linux-x86_64.AppImage`: graphical Tauri desktop edition with the Hook embedded.
+- `codex-notify-linux-x86_64`: Headless single executable with no GTK, WebKitGTK, GIO or display-server dependency. The same file acts as both management CLI and Codex Hook.
+
+Headless quick start:
+
+```bash
+chmod +x codex-notify-linux-x86_64
+mv codex-notify-linux-x86_64 ~/.local/bin/codex-notify
+codex-notify init
+read -rsp "Bark device key: " CODEX_NOTIFY_BARK_KEY && export CODEX_NOTIFY_BARK_KEY
+codex-notify test
+codex-notify hook install
+codex-notify hook status
+```
+
+After installing, open `/hooks` in Codex and trust the `Stop` and `PermissionRequest` handlers. Keep the environment variable available to the Codex process. Run `codex-notify daemon` in a supervisor or terminal when retries must continue without new Hook events; `daemon --once` processes only the currently due queue.
 
 ## Development
 
@@ -54,7 +81,7 @@ CODEX_NOTIFY_HOOK_PATH="$PWD/target/debug/codex-notify-hook" cargo run -p codex-
 ## Tests
 
 ```bash
-cargo test -p codex-notify-core -p codex-notify-hook
+cargo test -p codex-notify-core -p codex-notify-hook -p codex-notify-cli
 cd apps/desktop
 npm test
 npm run build

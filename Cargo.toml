@@ -2,6 +2,7 @@
 members = [
   "crates/codex-notify-core",
   "apps/hook",
+  "apps/cli",
   "apps/desktop/src-tauri",
 ]
 resolver = "2"

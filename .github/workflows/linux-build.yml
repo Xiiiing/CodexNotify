@@ -1,0 +1,74 @@
+name: Linux builds
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  headless:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: . -> target
+      - name: Build Headless CLI
+        run: cargo build --release -p codex-notify-cli
+      - name: Verify no desktop libraries are linked
+        run: |
+          ! ldd target/release/codex-notify | grep -E 'gtk|webkit|gio|gdk'
+          target/release/codex-notify --version
+      - name: Assemble Headless binary
+        run: |
+          mkdir -p artifacts
+          cp target/release/codex-notify artifacts/codex-notify-linux-x86_64
+          cd artifacts
+          sha256sum codex-notify-linux-x86_64 > codex-notify-linux-x86_64.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CodexNotify-Linux-Headless-x86_64
+          path: artifacts/codex-notify-linux-x86_64*
+          if-no-files-found: error
+          retention-days: 30
+
+  desktop:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: . -> target
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+      - name: Install Linux desktop dependencies
+        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf pkg-config
+      - name: Install frontend dependencies
+        working-directory: apps/desktop
+        run: npm ci
+      - name: Build release Hook and stage embedded binary
+        run: |
+          cargo build --release -p codex-notify-hook
+          mkdir -p apps/desktop/src-tauri/binaries
+          cp target/release/codex-notify-hook apps/desktop/src-tauri/binaries/codex-notify-hook-x86_64-unknown-linux-gnu
+      - name: Build AppImage
+        working-directory: apps/desktop
+        run: npx tauri build --bundles appimage
+      - name: Collect AppImage
+        run: |
+          mkdir -p artifacts
+          cp target/release/bundle/appimage/*.AppImage artifacts/CodexNotify-Linux-x86_64.AppImage
+          cd artifacts
+          sha256sum CodexNotify-Linux-x86_64.AppImage > CodexNotify-Linux-x86_64.AppImage.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CodexNotify-Linux-Desktop-x86_64
+          path: artifacts/CodexNotify-Linux-x86_64.AppImage*
+          if-no-files-found: error
+          retention-days: 30

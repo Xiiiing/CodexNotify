@@ -30,7 +30,7 @@ jobs:
       - name: Rust format
         run: cargo fmt --all -- --check
       - name: Rust tests
-        run: cargo test -p codex-notify-core -p codex-notify-hook
+        run: cargo test -p codex-notify-core -p codex-notify-hook -p codex-notify-cli
       - name: Stage Hook sidecar
         working-directory: apps/desktop
         run: npm run stage:hook

@@ -1,6 +1,7 @@
 pub mod bark;
 pub mod dispatcher;
 pub mod error;
+pub mod hook_runtime;
 pub mod hooks;
 pub mod notification;
 pub mod paths;
@@ -10,6 +11,7 @@ pub mod store;
 
 pub use dispatcher::{dispatch_due, DispatchResult};
 pub use error::{CoreError, CoreResult};
+pub use hook_runtime::process_hook_input;
 pub use notification::{build_notification, should_notify, HookEvent, Notification};
 pub use paths::AppPaths;
 pub use settings::{AppSettings, ProjectRule};
