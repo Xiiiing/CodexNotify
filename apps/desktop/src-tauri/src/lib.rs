@@ -250,7 +250,26 @@ fn set_autostart(enabled: bool, app: AppHandle) -> CommandResult<()> {
     })
 }
 
-fn locate_hook_binary() -> PathBuf {
+static EMBEDDED_HOOK: &[u8] = include_bytes!(env!("CODEX_NOTIFY_EMBEDDED_HOOK"));
+
+fn embedded_hook_path(paths: &AppPaths) -> std::io::Result<PathBuf> {
+    let directory = paths.data_dir.join("bin");
+    std::fs::create_dir_all(&directory)?;
+    let extension = if cfg!(windows) { ".exe" } else { "" };
+    let target = directory.join(format!("codex-notify-hook{extension}"));
+    let current = std::fs::read(&target).ok();
+    if current.as_deref() != Some(EMBEDDED_HOOK) {
+        let temporary = directory.join(format!("codex-notify-hook.new{extension}"));
+        std::fs::write(&temporary, EMBEDDED_HOOK)?;
+        if target.exists() {
+            std::fs::remove_file(&target)?;
+        }
+        std::fs::rename(temporary, &target)?;
+    }
+    Ok(target)
+}
+
+fn locate_hook_binary(paths: &AppPaths) -> PathBuf {
     if let Some(path) = std::env::var_os("CODEX_NOTIFY_HOOK_PATH") {
         return PathBuf::from(path);
     }
@@ -263,7 +282,8 @@ fn locate_hook_binary() -> PathBuf {
     if sibling.exists() {
         return sibling;
     }
-    directory.join(format!("binaries/codex-notify-hook{extension}"))
+    embedded_hook_path(paths)
+        .unwrap_or_else(|_| directory.join(format!("binaries/codex-notify-hook{extension}")))
 }
 
 fn create_tray(app: &AppHandle) -> tauri::Result<()> {
@@ -310,7 +330,7 @@ pub fn run() {
     let backend = Backend {
         paths: paths.clone(),
         store: store.clone(),
-        hook_binary: locate_hook_binary(),
+        hook_binary: locate_hook_binary(&paths),
     };
     let background = backend.clone();
     tauri::Builder::default()

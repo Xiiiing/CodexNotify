@@ -13,5 +13,5 @@
     "windows": [{ "label": "main", "title": "CodexNotify", "width": 1180, "height": 760, "minWidth": 920, "minHeight": 640 }],
     "security": { "csp": null }
   },
-  "bundle": { "active": false, "targets": "all", "externalBin": ["binaries/codex-notify-hook"] }
+  "bundle": { "active": false, "targets": "all" }
 }
