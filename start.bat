@@ -14,7 +14,7 @@ if not exist "%NOTIFIER_PYTHON%" (
 
 "%NOTIFIER_PYTHON%" -c "import customtkinter, pystray, PIL, cryptography" >nul 2>nul
 if errorlevel 1 (
-  echo [INFO] Installing Codex Bark Notifier dependencies into conda env clam_latest...
+  echo [INFO] Installing Codex Notify dependencies into conda env clam_latest...
   "%NOTIFIER_PYTHON%" -m pip install -r requirements.txt
   if errorlevel 1 (
     echo [ERROR] Dependency installation failed.

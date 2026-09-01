@@ -40,7 +40,7 @@ class TrayController:
         draw.ellipse((17, 16, 47, 46), fill=(255, 255, 255, 255))
         draw.polygon([(26, 43), (20, 55), (38, 45)], fill=(255, 255, 255, 255))
         menu = pystray.Menu(
-            pystray.MenuItem("打开 Codex Bark Notifier", lambda *_: self._show(), default=True),
+            pystray.MenuItem("打开 Codex Notify", lambda *_: self._show(), default=True),
             pystray.MenuItem(
                 "启用通知",
                 lambda *_: self._toggle_enabled(),
@@ -49,7 +49,7 @@ class TrayController:
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("退出程序", lambda *_: self._quit()),
         )
-        self.icon = pystray.Icon("CodexBarkNotifier", image, "Codex Bark Notifier", menu)
+        self.icon = pystray.Icon("CodexBarkNotifier", image, "Codex Notify", menu)
         self.icon.run_detached()
         return True
 

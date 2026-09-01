@@ -1,2 +1,1 @@
-"""Codex Bark Notifier core package."""
-
+"""Codex Notify core package."""

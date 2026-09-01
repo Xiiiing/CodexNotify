@@ -83,7 +83,7 @@ def send_notification(
         data=data,
         headers={
             "Content-Type": content_type,
-            "User-Agent": "CodexBarkNotifier/0.3",
+            "User-Agent": "CodexNotify/0.3",
         },
         method="POST",
     )

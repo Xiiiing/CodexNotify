@@ -1,4 +1,4 @@
-# Codex Bark Notifier
+# Codex Notify
 
 让 Codex 的任务完成、等待输入和权限请求，通过 Bark 到达 iPhone 与 Apple Watch。
 

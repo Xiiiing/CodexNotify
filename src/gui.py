@@ -60,7 +60,7 @@ QUIET_VALUES = {value: label for label, value in QUIET_LABELS.items()}
 class NotifierApp(ctk.CTk):
     def __init__(self) -> None:
         super().__init__()
-        self.title("Codex Bark Notifier")
+        self.title("Codex Notify")
         self.geometry("1180x760")
         self.minsize(1020, 680)
         self.configure(fg_color=BG)
@@ -763,7 +763,7 @@ class SetupWizard(ctk.CTkToplevel):
         super().__init__(app)
         self.app = app
         self.index = 0
-        self.title("Codex Bark Notifier 设置向导")
+        self.title("Codex Notify 设置向导")
         self.geometry("620x430")
         self.resizable(False, False)
         self.configure(fg_color=BG)

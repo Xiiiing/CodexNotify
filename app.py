@@ -18,7 +18,7 @@ def _acquire_single_instance() -> bool:
     if ctypes.get_last_error() == 183:  # ERROR_ALREADY_EXISTS
         kernel32.CloseHandle(handle)
         user32 = ctypes.windll.user32
-        window = user32.FindWindowW(None, "Codex Bark Notifier")
+        window = user32.FindWindowW(None, "Codex Notify") or user32.FindWindowW(None, "Codex Bark Notifier")
         if window:
             user32.ShowWindow(window, 9)  # SW_RESTORE
             user32.SetForegroundWindow(window)

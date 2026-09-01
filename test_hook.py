@@ -15,7 +15,7 @@ def main() -> int:
         "cwd": str(project_root.parent),
         "hook_event_name": "Stop",
         "stop_hook_active": False,
-        "last_assistant_message": "模拟任务已经完成，Codex Bark Notifier 工作正常。",
+        "last_assistant_message": "模拟任务已经完成，Codex Notify 工作正常。",
     }
     input_bytes = json.dumps(event, ensure_ascii=False).encode("utf-8")
     result = subprocess.run(
