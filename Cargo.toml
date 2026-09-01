@@ -1,0 +1,41 @@
+[workspace]
+members = [
+  "crates/codex-notify-core",
+  "apps/hook",
+  "apps/desktop/src-tauri",
+]
+resolver = "2"
+
+[workspace.package]
+edition = "2021"
+license = "MIT"
+version = "1.0.0"
+
+[workspace.dependencies]
+aes = "0.8"
+base64 = "0.22"
+cbc = "0.1"
+chrono = { version = "0.4", features = ["clock", "serde"] }
+directories = "6"
+keyring = { version = "4.2", features = ["v1"] }
+rand = "0.8"
+regex = "1"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls-native-roots"] }
+rusqlite = { version = "0.32", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+thiserror = "2"
+tempfile = "3"
+toml = "0.8"
+tracing = "0.1"
+tracing-appender = "0.2"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+url = "2"
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

@@ -1,6 +1,18 @@
-__pycache__/
-*.py[cod]
-.pytest_cache/
+# Rust
+/target/
+
+# Node / Vite
+node_modules/
+dist/
+apps/desktop/src-tauri/binaries/
+apps/desktop/src-tauri/gen/
+
+# Editor and OS files
+.DS_Store
+.idea/
+.vscode/
+
+# Legacy runtime data is intentionally not migrated.
 data/settings.json
 data/secret.dat
 data/encryption_secret.dat

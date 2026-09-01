@@ -1,4 +1,0 @@
-Pillow>=10.0,<13
-customtkinter>=5.2,<6
-cryptography>=42,<47
-pystray>=0.19,<1

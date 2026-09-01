@@ -1,0 +1,17 @@
+export type EventStatus = "queued" | "sending" | "retrying" | "sent" | "failed" | "suppressed";
+export interface ProjectRule { path: string; name: string; enabled: boolean }
+export interface AppSettings {
+  schemaVersion:number; enabled:boolean; barkServer:string; group:string; level:string; sound:string; scope:string;
+  projects:ProjectRule[]; messageMode:string; fixedMessage:string; notificationTitle:string; permissionNotifications:boolean;
+  redactSensitive:boolean; quietHoursEnabled:boolean; quietStart:string; quietEnd:string; quietAction:string; barkIcon:string;
+  clickUrl:string; requestTimeout:number; retryLimit:number; encryptionEnabled:boolean; encryptionAlgorithm:string;
+  setupCompleted:boolean; language:string; theme:string;
+}
+export interface EventCounts { queued:number; sending:number; retrying:number; sent:number; failed:number; suppressed:number }
+export type HookTrustStatus = "notInstalled" | "trusted" | "untrusted" | "modified" | "unknown";
+export interface HookStatus { hooksPath:string; exists:boolean; installed:boolean; handlerCount:number; installedEvents:string[]; pathCurrent:boolean; configuredCommand:string; trusted:boolean; trustStatus:HookTrustStatus; reviewRequired:boolean; enabled:boolean }
+export interface SecretStatus { barkKeyConfigured:boolean; encryptionKeyConfigured:boolean }
+export interface AppState { settings:AppSettings; counts:EventCounts; secrets:SecretStatus; hook:HookStatus; health:Record<string,unknown> }
+export interface EventRecord { id:number; eventKey:string; eventType:string; project:string; title:string; subtitle:string; body:string; status:EventStatus; attempts:number; nextAttemptAt:number; createdAt:number; sentAt?:number; error:string }
+export interface Diagnostics { settingsReadable:boolean; databaseReady:boolean; credentialStoreAvailable:boolean; hook:HookStatus; hookBinary:string; hookBinaryExists:boolean; health:Record<string,unknown> }
+export interface ApiError { code:string; message:string }

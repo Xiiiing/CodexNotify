@@ -1,0 +1,17 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "CodexNotify",
+  "version": "1.0.0",
+  "identifier": "com.xiiiing.codex-notify",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [{ "label": "main", "title": "CodexNotify", "width": 1180, "height": 760, "minWidth": 920, "minHeight": 640 }],
+    "security": { "csp": null }
+  },
+  "bundle": { "active": false, "targets": "all", "externalBin": ["binaries/codex-notify-hook"] }
+}
