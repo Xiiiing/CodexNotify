@@ -402,11 +402,25 @@ mod tests {
         let permission_hash = handler_hash("PermissionRequest", permission).unwrap();
         let stop_hash = handler_hash("Stop", stop).unwrap();
         let hooks_file = home.join("hooks.json").display().to_string();
+        let mut states = toml::map::Map::new();
+        for (key, hash) in [
+            (
+                format!("{hooks_file}:permission_request:0:0"),
+                permission_hash,
+            ),
+            (format!("{hooks_file}:stop:1:0"), stop_hash),
+        ] {
+            let mut state = toml::map::Map::new();
+            state.insert("trusted_hash".into(), toml::Value::String(hash));
+            states.insert(key, toml::Value::Table(state));
+        }
+        let mut hooks = toml::map::Map::new();
+        hooks.insert("state".into(), toml::Value::Table(states));
+        let mut config = toml::map::Map::new();
+        config.insert("hooks".into(), toml::Value::Table(hooks));
         std::fs::write(
             home.join("config.toml"),
-            format!(
-                "[hooks.state.\"{hooks_file}:permission_request:0:0\"]\ntrusted_hash = \"{permission_hash}\"\n\n[hooks.state.\"{hooks_file}:stop:1:0\"]\ntrusted_hash = \"{stop_hash}\"\n"
-            ),
+            toml::to_string(&toml::Value::Table(config)).unwrap(),
         )
         .unwrap();
         let trusted = status(&bin).unwrap();

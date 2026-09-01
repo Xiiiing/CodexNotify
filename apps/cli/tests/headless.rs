@@ -35,9 +35,11 @@ fn init_writes_non_secret_settings() {
 #[test]
 fn installs_itself_as_the_codex_hook() {
     let codex_home = tempfile::tempdir().unwrap();
+    let data = tempfile::tempdir().unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_codex-notify"))
         .args(["hook", "install"])
         .env("CODEX_HOME", codex_home.path())
+        .env("CODEX_NOTIFY_DATA_DIR", data.path())
         .output()
         .unwrap();
     assert!(
@@ -47,7 +49,17 @@ fn installs_itself_as_the_codex_hook() {
     );
     let hooks = std::fs::read_to_string(codex_home.path().join("hooks.json")).unwrap();
     assert!(hooks.contains("--codex-notify-hook"));
-    assert!(hooks.contains(env!("CARGO_BIN_EXE_codex-notify")));
     assert!(hooks.contains("PermissionRequest"));
     assert!(hooks.contains("Stop"));
+
+    let output = Command::new(env!("CARGO_BIN_EXE_codex-notify"))
+        .args(["hook", "status"])
+        .env("CODEX_HOME", codex_home.path())
+        .env("CODEX_NOTIFY_DATA_DIR", data.path())
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let status: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(status["installed"], true);
+    assert_eq!(status["pathCurrent"], true);
 }
