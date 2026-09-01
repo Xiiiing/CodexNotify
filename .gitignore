@@ -9,4 +9,3 @@ data/events.sqlite-*
 data/hook_health.json
 logs/*.log
 logs/*.log.*
-
