@@ -344,6 +344,24 @@ summary:focus-visible {
   background: var(--red-soft);
   border-color: transparent;
 }
+.danger-zone {
+  border-color: color-mix(in srgb, var(--red) 28%, var(--line));
+}
+.danger-zone-content {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+}
+.danger-zone p {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.55;
+  margin: 5px 0 0;
+}
+.uninstall-modal {
+  width: min(520px, calc(100vw - 32px));
+}
 .switch-row {
   display: flex;
   align-items: center;

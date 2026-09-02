@@ -47,6 +47,8 @@ chmod +x CodexNotify-Linux-Desktop-x86_64.AppImage
 
 The Linux desktop edition needs a working WebKitGTK desktop session. Use the Linux CLI edition on servers without a graphical environment.
 
+On Windows, save the EXE in a stable folder such as `Downloads` or `Apps` before launching it. Do not choose **Open** directly from the Edge download flyout. Browser `MicrosoftEdgeDownloads` temporary folders are rejected for portable storage.
+
 ### 2. Choose a data location
 
 On first launch, CodexNotify asks where to store non-secret application data:
@@ -80,6 +82,12 @@ If Linux has no available Secret Service, CodexNotify reports that the credentia
 5. Return to CodexNotify and select **Check trust**.
 
 CodexNotify never writes trust approval on your behalf. Codex may request another review after a Hook definition changes.
+
+Windows Hook commands use PowerShell invocation syntax and safely handle paths containing spaces. Verbatim `\\?\` custom paths written by an older build are simplified when loaded; select **Install / Repair** once to update the Hook command.
+
+### 5. Complete removal
+
+**System → Application removal → Remove application** removes CodexNotify's own Hooks, Bark/AES credentials, autostart entry, settings, SQLite history and queue, logs, standalone Hook, and the current application file. Third-party Hooks are preserved, and a safety backup of `hooks.json` remains under `~/.codex`.
 
 ## Headless Linux
 

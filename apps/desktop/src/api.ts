@@ -18,6 +18,7 @@ export const api = {
   hookStatus: () => invoke<HookStatus>("get_hook_status"),
   installHook: () => invoke<HookStatus>("install_hook"),
   uninstallHook: () => invoke<HookStatus>("uninstall_hook"),
+  uninstallApplication: () => invoke<void>("uninstall_application"),
   diagnostics: () => invoke<Diagnostics>("run_diagnostics"),
   autostart: () => invoke<boolean>("get_autostart"),
   setAutostart: (enabled:boolean) => invoke<void>("set_autostart",{enabled}),

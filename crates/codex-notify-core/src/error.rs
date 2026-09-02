@@ -15,6 +15,8 @@ pub enum CoreError {
     Credential(String),
     #[error("invalid configuration: {0}")]
     InvalidConfig(String),
+    #[error("portable storage cannot be used from a temporary download directory")]
+    TemporaryPortableLocation,
     #[error("network request failed: {0}")]
     Network(String),
     #[error("the Bark device key is invalid")]
@@ -50,6 +52,7 @@ impl From<CoreError> for ApiError {
             CoreError::Database(_) => "databaseError",
             CoreError::Credential(_) => "credentialError",
             CoreError::InvalidConfig(_) => "invalidConfig",
+            CoreError::TemporaryPortableLocation => "temporaryPortableLocation",
             CoreError::Network(_) => "networkError",
             CoreError::BarkInvalidKey => "barkInvalidKey",
             CoreError::BarkRejected => "barkRejected",

@@ -86,9 +86,11 @@ impl AppPaths {
             let (paths, root) = match locator.mode {
                 StorageMode::Default => (default.clone(), default_root(&default)),
                 StorageMode::Portable | StorageMode::Custom => {
-                    let root = locator.root.ok_or_else(|| {
+                    let stored_root = locator.root.ok_or_else(|| {
                         CoreError::InvalidConfig("storage location is missing its root path".into())
                     })?;
+                    // Repair roots written by older Windows builds that persisted `\\?\`.
+                    let root = dunce::simplified(&stored_root).to_path_buf();
                     (Self::from_root(&root), root)
                 }
                 StorageMode::Environment => {
@@ -229,6 +231,7 @@ fn storage_target(
         StorageMode::Default => Ok((default.clone(), default_root(default))),
         StorageMode::Portable => {
             let root = launcher_directory()?.join(PORTABLE_DATA_DIR);
+            reject_temporary_portable_location(&root)?;
             Ok((AppPaths::from_root(&root), root))
         }
         StorageMode::Custom => {
@@ -240,13 +243,28 @@ fn storage_target(
                     )
                 })?;
             std::fs::create_dir_all(requested)?;
-            let root = std::fs::canonicalize(requested)?;
+            // `std::fs::canonicalize` returns a verbatim `\\?\` path on Windows. That form is
+            // valid for Win32 file APIs but is not a safe shell command path for Codex Hooks.
+            let root = dunce::canonicalize(requested)?;
             Ok((AppPaths::from_root(&root), root))
         }
         StorageMode::Environment => Err(CoreError::InvalidConfig(
             "environment storage is selected with CODEX_NOTIFY_DATA_DIR".into(),
         )),
     }
+}
+
+fn reject_temporary_portable_location(_root: &Path) -> CoreResult<()> {
+    #[cfg(windows)]
+    {
+        let temporary =
+            dunce::canonicalize(std::env::temp_dir()).unwrap_or_else(|_| std::env::temp_dir());
+        let candidate = dunce::canonicalize(_root).unwrap_or_else(|_| _root.to_path_buf());
+        if candidate.starts_with(&temporary) {
+            return Err(CoreError::TemporaryPortableLocation);
+        }
+    }
+    Ok(())
 }
 
 fn persist_storage(
@@ -506,6 +524,7 @@ fn launcher_directory() -> CoreResult<PathBuf> {
         }
     }
     let executable = std::env::current_exe()?;
+    let executable = dunce::simplified(&executable);
     let directory = executable
         .parent()
         .ok_or_else(|| CoreError::InvalidConfig("application directory is unavailable".into()))?

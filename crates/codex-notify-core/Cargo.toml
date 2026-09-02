@@ -10,6 +10,7 @@ base64.workspace = true
 cbc.workspace = true
 chrono.workspace = true
 directories.workspace = true
+dunce.workspace = true
 keyring.workspace = true
 rand.workspace = true
 regex.workspace = true

@@ -7,6 +7,7 @@ use codex_notify_core::{
 };
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tauri::menu::{CheckMenuItem, Menu, MenuItem};
@@ -417,6 +418,162 @@ fn uninstall_hook(state: State<'_, Backend>) -> CommandResult<HookStatus> {
         hooks::status(&state.hook_binary)
     })())
 }
+
+fn application_binary_path() -> std::io::Result<PathBuf> {
+    #[cfg(target_os = "linux")]
+    if let Some(app_image) = std::env::var_os("APPIMAGE") {
+        return Ok(PathBuf::from(app_image));
+    }
+
+    let executable = std::env::current_exe()?;
+    let executable = dunce::simplified(&executable).to_path_buf();
+    #[cfg(target_os = "macos")]
+    if let Some(bundle) = executable
+        .ancestors()
+        .find(|path| path.extension().is_some_and(|extension| extension == "app"))
+    {
+        return Ok(bundle.to_path_buf());
+    }
+    Ok(executable)
+}
+
+fn uninstall_targets(app: &AppHandle, state: &Backend) -> Vec<PathBuf> {
+    let mut targets = vec![
+        state.paths.config_dir.clone(),
+        state.paths.data_dir.clone(),
+        state.paths.log_dir.clone(),
+        PathBuf::from(&state.storage.locator_file),
+    ];
+    // Tauri/WebView keeps a small amount of UI state outside the user-selected data root.
+    // Include only identifier-scoped application directories returned by Tauri itself.
+    targets.extend(
+        [
+            app.path().app_config_dir(),
+            app.path().app_data_dir(),
+            app.path().app_local_data_dir(),
+            app.path().app_cache_dir(),
+            app.path().app_log_dir(),
+        ]
+        .into_iter()
+        .flatten(),
+    );
+    if state.storage.mode == StorageMode::Portable {
+        let root = PathBuf::from(&state.storage.root);
+        if root
+            .file_name()
+            .is_some_and(|name| name == "CodexNotifyData")
+        {
+            targets.push(root.clone());
+            if let Some(parent) = root.parent() {
+                targets.push(parent.join(".codex-notify-portable"));
+            }
+        }
+    }
+    if let Ok(binary) = application_binary_path() {
+        targets.push(binary);
+    }
+    targets.sort();
+    targets.dedup();
+    targets
+}
+
+fn validate_uninstall_location(state: &Backend) -> CommandResult<()> {
+    let root = PathBuf::from(&state.storage.root);
+    // Custom/environment roots are user-controlled. Never recursively remove generic
+    // config/data/logs directories directly below a filesystem root (for example `/data`
+    // or `D:\data`), even after an explicit UI confirmation.
+    if matches!(
+        state.storage.mode,
+        StorageMode::Custom | StorageMode::Environment
+    ) && root.parent().is_none()
+    {
+        return Err(ApiError {
+            code: "applicationUninstallUnsafeLocation",
+            message: "the selected application data root is a filesystem root".into(),
+        });
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn schedule_uninstall_cleanup(targets: &[PathBuf]) -> std::io::Result<()> {
+    use std::os::windows::process::CommandExt;
+
+    fn quote(value: &std::path::Path) -> String {
+        format!("'{}'", value.to_string_lossy().replace('\'', "''"))
+    }
+
+    let paths = targets
+        .iter()
+        .map(|path| quote(path))
+        .collect::<Vec<_>>()
+        .join(",");
+    let script = format!(
+        "$ErrorActionPreference='SilentlyContinue'; \
+         while (Get-Process -Id {} -ErrorAction SilentlyContinue) {{ Start-Sleep -Milliseconds 250 }}; \
+         foreach ($target in @({paths})) {{ Remove-Item -LiteralPath $target -Recurse -Force -ErrorAction SilentlyContinue }}",
+        std::process::id()
+    );
+    Command::new("powershell.exe")
+        .args([
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            &script,
+        ])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .creation_flags(0x0800_0000 | 0x0000_0200)
+        .spawn()?;
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn schedule_uninstall_cleanup(targets: &[PathBuf]) -> std::io::Result<()> {
+    let pid = std::process::id().to_string();
+    let mut command = Command::new("/bin/sh");
+    command.args([
+        "-c",
+        "pid=$1; shift; while kill -0 \"$pid\" 2>/dev/null; do sleep 1; done; for target do rm -rf -- \"$target\"; done",
+        "codex-notify-uninstall",
+        &pid,
+    ]);
+    command.args(targets);
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()?;
+    Ok(())
+}
+
+#[tauri::command]
+fn uninstall_application(app: AppHandle, state: State<'_, Backend>) -> CommandResult<()> {
+    validate_uninstall_location(&state)?;
+    // Refuse to remove application data if the Hook config cannot first be updated safely.
+    api(hooks::uninstall().map(|_| ()))?;
+    api(security::delete_secret(BARK_KEY_ACCOUNT))?;
+    api(security::delete_secret(ENCRYPTION_KEY_ACCOUNT))?;
+    app.autolaunch().disable().map_err(|error| ApiError {
+        code: "autostartError",
+        message: error.to_string(),
+    })?;
+    schedule_uninstall_cleanup(&uninstall_targets(&app, &state)).map_err(|error| ApiError {
+        code: "applicationUninstallError",
+        message: error.to_string(),
+    })?;
+
+    let exit_app = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(250));
+        exit_app.exit(0);
+    });
+    Ok(())
+}
 #[tauri::command]
 fn run_diagnostics(state: State<'_, Backend>) -> CommandResult<Diagnostics> {
     api((|| {
@@ -634,6 +791,7 @@ pub fn run() {
             get_hook_status,
             install_hook,
             uninstall_hook,
+            uninstall_application,
             run_diagnostics,
             get_autostart,
             set_autostart

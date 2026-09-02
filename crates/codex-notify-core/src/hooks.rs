@@ -192,12 +192,19 @@ fn remove_ours(document: &mut Value) -> u32 {
 fn quote_posix(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
 }
-fn quote_windows(value: &str) -> String {
-    format!("\"{}\"", value.replace('"', "\\\""))
+fn windows_command(value: &str) -> String {
+    // Codex executes hooks through the active session shell. Invoke PowerShell explicitly so
+    // this remains valid whether that outer shell is PowerShell or cmd.exe. A quoted path alone
+    // is only a string expression in PowerShell; `&` performs the actual invocation.
+    format!(
+        "powershell.exe -NoLogo -NoProfile -NonInteractive -Command \"& '{}' {}\"",
+        value.replace('\'', "''"),
+        NEW_MARKER
+    )
 }
 fn handler(binary: &Path) -> Value {
     let path = binary.to_string_lossy();
-    json!({"type":"command","command":format!("{} {}",quote_posix(&path),NEW_MARKER),"commandWindows":format!("{} {}",quote_windows(&path),NEW_MARKER),"timeout":30,"async":true,"statusMessage":"Recording Codex notification"})
+    json!({"type":"command","command":format!("{} {}",quote_posix(&path),NEW_MARKER),"commandWindows":windows_command(&path),"timeout":30,"async":true,"statusMessage":"Recording Codex notification"})
 }
 fn backup(path: &Path) -> CoreResult<Option<PathBuf>> {
     if !path.exists() {
@@ -375,6 +382,17 @@ pub fn uninstall() -> CoreResult<(PathBuf, Option<PathBuf>, u32)> {
 mod tests {
     use super::*;
     #[test]
+    fn windows_command_is_independent_of_the_outer_shell() {
+        assert_eq!(
+            windows_command(r"C:\Users\A User\hook.exe"),
+            r#"powershell.exe -NoLogo -NoProfile -NonInteractive -Command "& 'C:\Users\A User\hook.exe' --codex-notify-hook""#
+        );
+        assert_eq!(
+            windows_command(r"D:\it's\hook.exe"),
+            r#"powershell.exe -NoLogo -NoProfile -NonInteractive -Command "& 'D:\it''s\hook.exe' --codex-notify-hook""#
+        );
+    }
+    #[test]
     fn install_preserves_other_hooks() {
         let temp = tempfile::tempdir().unwrap();
         let home = temp.path().join("codex");
@@ -399,6 +417,11 @@ mod tests {
         let document = load(&home.join("hooks.json")).unwrap();
         let permission = &document["hooks"]["PermissionRequest"][0]["hooks"][0];
         let stop = &document["hooks"]["Stop"][1]["hooks"][0];
+        assert!(permission["commandWindows"]
+            .as_str()
+            .is_some_and(|command| command.starts_with("powershell.exe ")
+                && command.contains("& '")
+                && command.ends_with("\"")));
         let permission_hash = handler_hash("PermissionRequest", permission).unwrap();
         let stop_hash = handler_hash("Stop", stop).unwrap();
         let hooks_file = home.join("hooks.json").display().to_string();

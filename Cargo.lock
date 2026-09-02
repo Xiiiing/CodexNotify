@@ -630,6 +630,7 @@ dependencies = [
  "cbc 0.1.2",
  "chrono",
  "directories",
+ "dunce",
  "keyring",
  "rand 0.8.8",
  "regex",
@@ -653,6 +654,7 @@ version = "1.1.0"
 dependencies = [
  "codex-notify-core",
  "dbus",
+ "dunce",
  "serde",
  "serde_json",
  "tauri",

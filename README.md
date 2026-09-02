@@ -47,6 +47,8 @@ chmod +x CodexNotify-Linux-Desktop-x86_64.AppImage
 
 Linux 桌面版需要可用的 WebKitGTK 桌面环境；没有桌面的服务器请使用 Linux CLI 版本。
 
+Windows 请先把 EXE 保存到 `Downloads`、`Apps` 等稳定目录，再双击运行；不要从 Edge 的下载浮窗直接“打开”。浏览器的 `MicrosoftEdgeDownloads` 临时目录不能用于便携数据，应用会拒绝这种位置。
+
 ### 2. 选择数据保存位置
 
 首次启动会先要求选择非密钥数据的保存位置：
@@ -80,6 +82,12 @@ Linux 没有可用 Secret Service 时，应用会明确提示凭据库不可用�
 5. 回到 CodexNotify，点击“检查信任”。
 
 CodexNotify 不会代替用户写入信任状态。Hook 配置发生变化后，Codex 可能要求重新审核。
+
+Windows Hook 使用 PowerShell 调用语法生成 `commandWindows`，可正确处理包含空格的路径。旧版本写入的 `\\?\` 自定义路径会在读取时自动简化；点击一次“安装 / 修复”即可更新 Hook 命令。
+
+### 5. 彻底卸载
+
+“系统 → 应用卸载 → 彻底卸载”会移除 CodexNotify 自己的 Hook、Bark/AES 系统凭据、自启动项、设置、SQLite 历史与队列、日志、独立 Hook 和当前应用文件。第三方 Hook 会保留，`~/.codex` 中也会留下卸载前的 `hooks.json` 安全备份。
 
 ## Linux 无桌面版
 

@@ -1108,9 +1108,11 @@ function SystemPage({
   const [diag, setDiag] = useState<Diagnostics | null>(null);
   const [autostart, setAutostart] = useState(false);
   const [busy, setBusy] = useState<
-    "install" | "uninstall" | "check" | "diag" | null
+    "install" | "uninstall" | "removeApp" | "check" | "diag" | null
   >(null);
   const [moveStorage, setMoveStorage] = useState(false);
+  const [removeApplication, setRemoveApplication] = useState(false);
+  const [removeConfirmation, setRemoveConfirmation] = useState("");
   useEffect(() => {
     void api
       .autostart()
@@ -1174,6 +1176,15 @@ function SystemPage({
     } catch (error) {
       setAutostart(!value);
       onError(message(error, t("unknownError")));
+    }
+  };
+  const removeApp = async () => {
+    setBusy("removeApp");
+    try {
+      await api.uninstallApplication();
+    } catch (value) {
+      onError(message(value, t("unknownError")));
+      setBusy(null);
     }
   };
   const trustLabel =
@@ -1385,6 +1396,17 @@ function SystemPage({
               </div>
             </div>
           </Card>
+          <Card title={t("applicationUninstall")} className="danger-zone">
+            <div className="danger-zone-content">
+              <div>
+                <strong>{t("applicationUninstallTitle")}</strong>
+                <p>{t("applicationUninstallHint")}</p>
+              </div>
+              <Button kind="danger" onClick={() => setRemoveApplication(true)}>
+                {t("uninstallApplication")}
+              </Button>
+            </div>
+          </Card>
         </div>
       </div>
       {moveStorage && (
@@ -1393,6 +1415,51 @@ function SystemPage({
           close={() => setMoveStorage(false)}
           onError={onError}
         />
+      )}
+      {removeApplication && (
+        <div className="modal-backdrop">
+          <div className="setup-modal uninstall-modal">
+            <div className="setup-copy">
+              <span className="kicker">{t("applicationUninstall")}</span>
+              <h2>{t("applicationUninstallConfirmTitle")}</h2>
+              <p>{t("applicationUninstallConfirmBody")}</p>
+            </div>
+            <div className="migration-warning">
+              <strong>{t("applicationUninstallDeletes")}</strong>
+              <span>{t("applicationUninstallBackupHint")}</span>
+            </div>
+            <Field label={t("applicationUninstallTypeHint")}>
+              <input
+                autoFocus
+                value={removeConfirmation}
+                placeholder="CodexNotify"
+                onChange={(event) => setRemoveConfirmation(event.target.value)}
+              />
+            </Field>
+            <div className="button-row">
+              <Button
+                disabled={busy === "removeApp"}
+                onClick={() => {
+                  setRemoveApplication(false);
+                  setRemoveConfirmation("");
+                }}
+              >
+                {t("cancel")}
+              </Button>
+              <Button
+                kind="danger"
+                disabled={
+                  busy === "removeApp" || removeConfirmation !== "CodexNotify"
+                }
+                onClick={() => void removeApp()}
+              >
+                {busy === "removeApp"
+                  ? t("applicationUninstalling")
+                  : t("uninstallApplication")}
+              </Button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

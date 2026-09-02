@@ -215,6 +215,20 @@ const en = {
   storageMigrating: "Moving data…",
   storageEnvironmentHint:
     "This location is enforced by CODEX_NOTIFY_DATA_DIR. Remove the environment variable before changing it.",
+  applicationUninstall: "Application removal",
+  applicationUninstallTitle: "Remove CodexNotify from this computer",
+  applicationUninstallHint:
+    "Removes CodexNotify Hooks, credentials, settings, history, logs and the current application file.",
+  uninstallApplication: "Remove application",
+  applicationUninstallConfirmTitle: "Permanently remove CodexNotify?",
+  applicationUninstallConfirmBody:
+    "This operation cannot be undone. CodexNotify will close automatically after scheduling cleanup.",
+  applicationUninstallDeletes:
+    "Hooks, Bark credentials, application data and the executable will be deleted.",
+  applicationUninstallBackupHint:
+    "Third-party Hooks are preserved. A safety backup of hooks.json remains in the Codex configuration folder.",
+  applicationUninstallTypeHint: "Type CodexNotify to confirm",
+  applicationUninstalling: "Removing…",
   storageMode: {
     default: "System default",
     portable: "Portable",
@@ -269,6 +283,11 @@ const en = {
     autostartError: "The login startup setting could not be updated.",
     invalidSecretKind: "The requested secret type is invalid.",
     storageMigrationBusy: "A data migration is already running.",
+    temporaryPortableLocation:
+      "Save CodexNotify in a stable folder before selecting portable storage. Browser temporary download folders are not supported.",
+    applicationUninstallError: "CodexNotify could not schedule complete removal.",
+    applicationUninstallUnsafeLocation:
+      "For safety, complete removal is unavailable while the data location is a filesystem root. Move the data to a dedicated folder first.",
   },
 };
 const zh = {
@@ -478,6 +497,20 @@ const zh = {
   storageMigrating: "正在迁移…",
   storageEnvironmentHint:
     "当前位置由 CODEX_NOTIFY_DATA_DIR 强制指定；移除该环境变量后才能更换。",
+  applicationUninstall: "应用卸载",
+  applicationUninstallTitle: "从此电脑彻底移除 CodexNotify",
+  applicationUninstallHint:
+    "删除 CodexNotify Hook、系统凭据、设置、历史、日志以及当前程序文件。",
+  uninstallApplication: "彻底卸载",
+  applicationUninstallConfirmTitle: "确定永久删除 CodexNotify？",
+  applicationUninstallConfirmBody:
+    "此操作无法撤销。安排清理后 CodexNotify 将自动退出。",
+  applicationUninstallDeletes:
+    "Hook、Bark 凭据、全部应用数据和当前可执行程序都将被删除。",
+  applicationUninstallBackupHint:
+    "第三方 Hook 会保留；Codex 配置目录中会留下 hooks.json 安全备份。",
+  applicationUninstallTypeHint: "输入 CodexNotify 以确认",
+  applicationUninstalling: "正在卸载…",
   storageMode: {
     default: "系统默认",
     portable: "便携模式",
@@ -528,6 +561,11 @@ const zh = {
     autostartError: "无法更新登录自启动设置。",
     invalidSecretKind: "密钥类型无效。",
     storageMigrationBusy: "已有数据迁移正在进行。",
+    temporaryPortableLocation:
+      "请先将 CodexNotify 保存到稳定目录，再选择便携模式；不支持浏览器临时下载目录。",
+    applicationUninstallError: "无法安排 CodexNotify 的完整卸载。",
+    applicationUninstallUnsafeLocation:
+      "为避免误删文件，数据位置是磁盘根目录时不能完整卸载；请先迁移到独立文件夹。",
   },
 };
 

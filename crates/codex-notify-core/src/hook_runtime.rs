@@ -41,6 +41,10 @@ fn error_details(error: &CoreError) -> (&'static str, &'static str) {
             "The Hook could not read the system credential store.",
         ),
         CoreError::InvalidConfig(_) => ("invalidConfig", "The saved settings are invalid."),
+        CoreError::TemporaryPortableLocation => (
+            "temporaryPortableLocation",
+            "Portable storage cannot use a temporary download directory.",
+        ),
         CoreError::Network(_) | CoreError::BarkUnreachable => (
             "barkUnreachable",
             "The Hook could not reach the Bark server.",
