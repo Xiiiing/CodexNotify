@@ -132,7 +132,7 @@ jobs:
     env:
       CC_x86_64_unknown_linux_musl: musl-gcc
       CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
-      RUSTFLAGS: -C target-feature=+crt-static
+      RUSTFLAGS: -C target-feature=+crt-static -C link-arg=-static
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -147,6 +147,7 @@ jobs:
         run: cargo build --release -p codex-notify-cli --target x86_64-unknown-linux-musl
       - name: Verify static binary and collect release file
         run: |
+          file target/x86_64-unknown-linux-musl/release/codex-notify
           if readelf -l target/x86_64-unknown-linux-musl/release/codex-notify | grep -q 'Requesting program interpreter'; then
             echo "Headless CLI unexpectedly requires a dynamic loader"
             exit 1
