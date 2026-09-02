@@ -1,7 +1,7 @@
 <div align="center">
   <img src="apps/desktop/src/assets/app-icon.png" width="112" alt="CodexNotify Logo">
   <h1>CodexNotify</h1>
-  <p>Send Codex completion and permission alerts to your iPhone and Apple Watch through Bark.</p>
+  <p>Send Codex completion, user-input, and permission alerts to your iPhone and Apple Watch through Bark.</p>
   <p>
     <a href="README.md">简体中文</a> ·
     <a href="README_EN.md">English</a> ·
@@ -11,7 +11,7 @@
 
 ## Overview
 
-CodexNotify is a lightweight notification companion for Windows, macOS, and Linux. It listens for the Codex `Stop` and `PermissionRequest` Hooks and sends a Bark notification when a task finishes, waits for input, or requests permission.
+CodexNotify is a lightweight notification companion for Windows, macOS, and Linux. It listens for Codex `Stop` and `PermissionRequest` Hooks and captures `request_user_input` through `PreToolUse`, sending a Bark notification when a task finishes, waits for input, or requests permission.
 
 - The desktop app uses Tauri 2, React, and TypeScript for settings, history, diagnostics, and Hook management.
 - Rust handles the Hook, HTTP requests, AES encryption, SQLite queue, and sensitive-data redaction.
@@ -61,9 +61,11 @@ On first launch, CodexNotify asks where to store non-secret application data:
 
 For portable and custom locations, a small `storage.json` locator remains in the system configuration directory so the independent Hook can find the selected data while the desktop app is closed. It contains no Bark key, AES key, or notification body.
 
+After downloading a new executable, a stored location is reused only when its `settings.json` still exists and is valid. If the old directory was removed or is incomplete, CodexNotify does not recreate it and shows the location chooser again. Credentials in the operating-system store remain available.
+
 ### 3. Connect Bark
 
-Enter the Bark server and Device Key in the first-run wizard, then send a test notification. CodexNotify supports official and self-hosted Bark servers, HTTP/HTTPS, sound, group, level, icon, click URL, and AES-128/256-CBC encryption.
+Confirm the automatically detected source-device name, enter the Bark server and Device Key, then send a test notification. Titles use “device name · project name”; a subtitle appears only when the Hook directly supplies a session name. CodexNotify also supports Markdown, images, critical volume, badges, repeated sounds, copy text, archive controls, tap actions, stable IDs, remote update/delete, and AES-128/256-CBC encryption.
 
 Desktop secrets are stored in the operating system credential store:
 
@@ -78,7 +80,7 @@ If Linux has no available Secret Service, CodexNotify reports that the credentia
 1. Open the System page in CodexNotify.
 2. Select **Install / Repair**.
 3. Return to Codex and enter `/hooks`.
-4. Select `PermissionRequest` and `Stop`, then press `T` to trust each Hook.
+4. Select `PreToolUse`, `PermissionRequest`, and `Stop`, then press `T` to trust each Hook.
 5. Return to CodexNotify and select **Check trust**.
 
 CodexNotify never writes trust approval on your behalf. Codex may request another review after a Hook definition changes.
@@ -91,21 +93,25 @@ Windows Hook commands use PowerShell invocation syntax and safely handle paths c
 
 ## Headless Linux
 
-The CLI product is a fully static x86_64 Linux executable with no desktop dependencies:
+The CLI product is a fully static x86_64 Linux executable with no desktop dependencies. Installation requires only one environment variable: `CODEX_NOTIFY_BARK_KEY`.
 
 ```bash
-chmod +x codex-notify-Linux-CLI-x86_64
 mkdir -p ~/.local/bin
-mv codex-notify-Linux-CLI-x86_64 ~/.local/bin/codex-notify
+curl -fL https://github.com/Xiiiing/CodexNotify/releases/latest/download/codex-notify-Linux-CLI-x86_64 \
+  -o ~/.local/bin/codex-notify
+chmod +x ~/.local/bin/codex-notify
 
-codex-notify init
 export CODEX_NOTIFY_BARK_KEY='your Bark Device Key'
+export PATH="$HOME/.local/bin:$PATH"
+codex-notify init
 codex-notify test
 codex-notify hook install
 codex-notify hook status
 ```
 
-Next, enter `/hooks` in Codex and trust `PermissionRequest` and `Stop`. The Codex process must inherit `CODEX_NOTIFY_BARK_KEY`. Set `CODEX_NOTIFY_ENCRYPTION_KEY` as well when AES is enabled.
+Next, enter `/hooks` in Codex and trust `PreToolUse`, `PermissionRequest`, and `Stop`. Launch Codex from the same terminal. Add the two `export` lines above to `~/.bashrc` or `~/.zshrc` to make them persistent. No custom data directory or resident daemon is required; later Hook events also process failed retries.
+
+AES encryption, a custom data root, and a resident retry service remain optional advanced capabilities and are not needed for a normal Linux CLI deployment.
 
 Common commands:
 
@@ -167,7 +173,9 @@ The Hook always returns a successful protocol response to Codex. Delivery failur
 
 ## Features
 
-- Bark server, title, body mode, sound, group, level, icon, and click URL
+- Automatically detected, editable device name and a fixed “device · project” title
+- `Stop`, ordinary input-request, and permission-request alerts with optional Hook session subtitles
+- Bark Markdown, image, volume, badge, sound, copy, archive, action, remote update, and deletion controls
 - AES-128/256-CBC encrypted pushes
 - All-project, include, exclude, and project-alias rules
 - Chinese/English UI with system, light, and dark themes

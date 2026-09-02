@@ -189,6 +189,8 @@ jobs:
             - **Linux 桌面 x86_64：** `CodexNotify-Linux-Desktop-x86_64.AppImage`
             - **Linux 无桌面 x86_64：** `codex-notify-Linux-CLI-x86_64`
 
+            Linux CLI 只需下载单文件并设置 `CODEX_NOTIFY_BARK_KEY`，然后运行 `codex-notify init && codex-notify hook install`。
+
             使用说明：[中文文档](https://github.com/${{ github.repository }}/blob/${{ github.ref_name }}/README.md) · [English documentation](https://github.com/${{ github.repository }}/blob/${{ github.ref_name }}/README_EN.md)
 
             Windows 与 macOS 版本目前没有商业代码签名，首次启动时系统可能要求额外确认。Linux 文件下载后可能需要先执行 `chmod +x <文件名>`。

@@ -613,7 +613,7 @@ checksum = "0c9ea0ac24bc397ab3c98583a3c9ba74fa56b09a4449bbe172b9b1ddb016027a"
 
 [[package]]
 name = "codex-notify-cli"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "chrono",
  "codex-notify-core",
@@ -623,7 +623,7 @@ dependencies = [
 
 [[package]]
 name = "codex-notify-core"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "aes 0.8.4",
  "base64 0.22.1",
@@ -631,6 +631,7 @@ dependencies = [
  "chrono",
  "directories",
  "dunce",
+ "hostname",
  "keyring",
  "rand 0.8.8",
  "regex",
@@ -650,7 +651,7 @@ dependencies = [
 
 [[package]]
 name = "codex-notify-desktop"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "codex-notify-core",
  "dbus",
@@ -668,7 +669,7 @@ dependencies = [
 
 [[package]]
 name = "codex-notify-hook"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "chrono",
  "codex-notify-core",
@@ -1804,6 +1805,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6303bc9732ae41b04cb554b844a762b4115a61bfaa81e3e83050991eeb56863f"
 dependencies = [
  "digest 0.11.3",
+]
+
+[[package]]
+name = "hostname"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "617aaa3557aef3810a6369d0a99fac8a080891b68bd9f9812a1eeda0c0730cbd"
+dependencies = [
+ "cfg-if",
+ "libc",
+ "windows-link 0.2.1",
 ]
 
 [[package]]

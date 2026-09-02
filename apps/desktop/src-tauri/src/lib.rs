@@ -81,6 +81,13 @@ struct TestHookResult {
     message: String,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RemoteDeleteResult {
+    deleted: usize,
+    failed: usize,
+}
+
 type CommandResult<T> = Result<T, ApiError>;
 fn api<T>(value: codex_notify_core::CoreResult<T>) -> CommandResult<T> {
     value.map_err(Into::into)
@@ -250,18 +257,20 @@ async fn test_bark_connection(input: TestBarkInput) -> CommandResult<TestBarkRes
             let chinese = input.settings.language == "zh";
             let notification = Notification {
                 event_key: "manual-test".into(),
+                bark_id: format!(
+                    "manual-test-{}",
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_millis()
+                ),
                 event_type: "Test".into(),
                 session_id: String::new(),
                 turn_id: String::new(),
                 project: "CodexNotify".into(),
                 cwd: String::new(),
-                title: "✅ CodexNotify".into(),
-                subtitle: if chinese {
-                    "测试通知"
-                } else {
-                    "Test notification"
-                }
-                .into(),
+                title: format!("{} · CodexNotify", input.settings.device_name),
+                subtitle: String::new(),
                 body: if chinese {
                     "CodexNotify 连接测试成功。"
                 } else {
@@ -273,6 +282,16 @@ async fn test_bark_connection(input: TestBarkInput) -> CommandResult<TestBarkRes
                 sound: input.settings.sound.clone(),
                 icon: input.settings.bark_icon.clone(),
                 url: input.settings.click_url.clone(),
+                markdown: input.settings.bark_markdown,
+                image: input.settings.bark_image.clone(),
+                volume: input.settings.bark_volume,
+                badge: input.settings.bark_badge,
+                call: input.settings.bark_call,
+                auto_copy: input.settings.bark_auto_copy,
+                copy: input.settings.bark_copy.clone(),
+                archive: input.settings.bark_archive,
+                ttl: input.settings.bark_ttl,
+                action: input.settings.bark_action.clone(),
                 suppressed: false,
                 suppress_reason: String::new(),
             };
@@ -399,6 +418,135 @@ fn retry_failed(state: State<'_, Backend>) -> CommandResult<usize> {
 #[tauri::command]
 fn clear_history(state: State<'_, Backend>) -> CommandResult<usize> {
     api(state.store.clear_history())
+}
+
+fn delivery_credentials(
+    settings: &AppSettings,
+) -> codex_notify_core::CoreResult<(String, Option<String>)> {
+    let bark_key = security::get_secret(BARK_KEY_ACCOUNT)?
+        .ok_or(codex_notify_core::CoreError::BarkInvalidKey)?;
+    let encryption_key = if settings.encryption_enabled {
+        Some(
+            security::get_secret(ENCRYPTION_KEY_ACCOUNT)?.ok_or_else(|| {
+                codex_notify_core::CoreError::InvalidConfig(
+                    "Bark encryption is enabled but its key is missing".into(),
+                )
+            })?,
+        )
+    } else {
+        None
+    };
+    Ok((bark_key, encryption_key))
+}
+
+#[tauri::command]
+async fn update_remote_notification(
+    id: i64,
+    body: String,
+    state: State<'_, Backend>,
+) -> CommandResult<()> {
+    let backend = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || -> codex_notify_core::CoreResult<()> {
+        let settings = AppSettings::load(&backend.paths)?;
+        let record = backend.store.get(id)?.ok_or_else(|| {
+            codex_notify_core::CoreError::InvalidConfig("notification record was not found".into())
+        })?;
+        if record.status != EventStatus::Sent {
+            return Err(codex_notify_core::CoreError::InvalidConfig(
+                "only sent notifications can be updated".into(),
+            ));
+        }
+        let mut notification: Notification = serde_json::from_str(&record.payload_json)?;
+        notification.bark_id = if record.bark_id.is_empty() {
+            record.event_key.clone()
+        } else {
+            record.bark_id.clone()
+        };
+        notification.title = format!("{} · {}", settings.device_name.trim(), record.project);
+        notification.body = if settings.redact_sensitive {
+            codex_notify_core::redact_sensitive_text(body.trim())
+        } else {
+            body.trim().to_owned()
+        };
+        if notification.body.is_empty() {
+            return Err(codex_notify_core::CoreError::InvalidConfig(
+                "notification body cannot be empty".into(),
+            ));
+        }
+        let (key, encryption) = delivery_credentials(&settings)?;
+        bark::send(&notification, &settings, &key, encryption.as_deref())?;
+        let payload = serde_json::to_string(&notification)?;
+        backend
+            .store
+            .mark_remote_updated(id, &notification.body, &payload)
+    })
+    .await
+    .map_err(|_| ApiError {
+        code: "barkUnreachable",
+        message: "the notification update task could not be completed".into(),
+    })?
+    .map_err(Into::into)
+}
+
+#[tauri::command]
+async fn delete_remote_notification(id: i64, state: State<'_, Backend>) -> CommandResult<()> {
+    let backend = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || -> codex_notify_core::CoreResult<()> {
+        let settings = AppSettings::load(&backend.paths)?;
+        let record = backend.store.get(id)?.ok_or_else(|| {
+            codex_notify_core::CoreError::InvalidConfig("notification record was not found".into())
+        })?;
+        let bark_id = if record.bark_id.is_empty() {
+            record.event_key
+        } else {
+            record.bark_id
+        };
+        let (key, encryption) = delivery_credentials(&settings)?;
+        bark::delete(&bark_id, &settings, &key, encryption.as_deref())?;
+        backend.store.mark_remote_deleted(id)
+    })
+    .await
+    .map_err(|_| ApiError {
+        code: "barkUnreachable",
+        message: "the notification delete task could not be completed".into(),
+    })?
+    .map_err(Into::into)
+}
+
+#[tauri::command]
+async fn delete_all_remote_notifications(
+    state: State<'_, Backend>,
+) -> CommandResult<RemoteDeleteResult> {
+    let backend = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(
+        move || -> codex_notify_core::CoreResult<RemoteDeleteResult> {
+            let settings = AppSettings::load(&backend.paths)?;
+            let (key, encryption) = delivery_credentials(&settings)?;
+            let mut result = RemoteDeleteResult {
+                deleted: 0,
+                failed: 0,
+            };
+            for (id, bark_id) in backend.store.remote_notification_ids()? {
+                match bark::delete(&bark_id, &settings, &key, encryption.as_deref()) {
+                    Ok(_) => {
+                        backend.store.mark_remote_deleted(id)?;
+                        result.deleted += 1;
+                    }
+                    Err(error) => {
+                        tracing::warn!(event_id = id, %error, "remote Bark deletion failed");
+                        result.failed += 1;
+                    }
+                }
+            }
+            Ok(result)
+        },
+    )
+    .await
+    .map_err(|_| ApiError {
+        code: "barkUnreachable",
+        message: "the batch notification delete task could not be completed".into(),
+    })?
+    .map_err(Into::into)
 }
 #[tauri::command]
 fn get_hook_status(state: State<'_, Backend>) -> CommandResult<HookStatus> {
@@ -788,6 +936,9 @@ pub fn run() {
             retry_event,
             retry_failed,
             clear_history,
+            update_remote_notification,
+            delete_remote_notification,
+            delete_all_remote_notifications,
             get_hook_status,
             install_hook,
             uninstall_hook,

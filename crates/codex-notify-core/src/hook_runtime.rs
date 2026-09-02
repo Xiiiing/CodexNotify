@@ -138,7 +138,14 @@ pub fn process_hook_input(input: &[u8]) -> CoreResult<()> {
 fn process_hook_input_inner(input: &[u8], paths: &AppPaths) -> CoreResult<HookOutcome> {
     let input = input.strip_prefix(&[0xef, 0xbb, 0xbf]).unwrap_or(input);
     let event: HookEvent = serde_json::from_slice(input)?;
-    if !matches!(event.hook_event_name.as_str(), "Stop" | "PermissionRequest") {
+    let user_input_request = event.hook_event_name == "PreToolUse"
+        && matches!(
+            event.tool_name.as_str(),
+            "request_user_input" | "requestUserInput"
+        );
+    if !matches!(event.hook_event_name.as_str(), "Stop" | "PermissionRequest")
+        && !user_input_request
+    {
         return Ok(HookOutcome {
             event,
             project: String::new(),
@@ -147,8 +154,16 @@ fn process_hook_input_inner(input: &[u8], paths: &AppPaths) -> CoreResult<HookOu
         });
     }
 
-    let settings = AppSettings::load(&paths)?;
+    let settings = AppSettings::load(paths)?;
     if event.hook_event_name == "PermissionRequest" && !settings.permission_notifications {
+        return Ok(HookOutcome {
+            event,
+            project: String::new(),
+            stage: "filtered",
+            delivery_status: "disabled",
+        });
+    }
+    if user_input_request && !settings.user_input_notifications {
         return Ok(HookOutcome {
             event,
             project: String::new(),
@@ -166,7 +181,7 @@ fn process_hook_input_inner(input: &[u8], paths: &AppPaths) -> CoreResult<HookOu
     }
 
     let notification = build_notification(&event, &settings);
-    let store = EventStore::new(&paths)?;
+    let store = EventStore::new(paths)?;
     let (event_id, created) = store.enqueue(&notification)?;
     if created && !notification.suppressed {
         for result in dispatch_due(&store, &settings, 5)? {

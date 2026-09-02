@@ -1,7 +1,7 @@
 <div align="center">
   <img src="apps/desktop/src/assets/app-icon.png" width="112" alt="CodexNotify Logo">
   <h1>CodexNotify</h1>
-  <p>把 Codex 的任务完成与权限请求，通过 Bark 推送到 iPhone 和 Apple Watch。</p>
+  <p>把 Codex 的任务完成、用户输入与权限请求，通过 Bark 推送到 iPhone 和 Apple Watch。</p>
   <p>
     <a href="README.md">简体中文</a> ·
     <a href="README_EN.md">English</a> ·
@@ -11,7 +11,7 @@
 
 ## 项目简介
 
-CodexNotify 是一个面向 Windows、macOS 和 Linux 的轻量通知助手。它监听 Codex 的 `Stop` 与 `PermissionRequest` Hook，在任务结束、等待输入或请求权限时发送 Bark 通知。
+CodexNotify 是一个面向 Windows、macOS 和 Linux 的轻量通知助手。它监听 Codex 的 `Stop`、`PermissionRequest`，并通过 `PreToolUse` 捕获 `request_user_input`，在任务结束、等待输入或请求权限时发送 Bark 通知。
 
 - 桌面端使用 Tauri 2 + React + TypeScript，提供设置、历史、诊断和 Hook 管理界面。
 - Hook、网络请求、AES 加密、SQLite 队列和敏感信息脱敏均由 Rust 完成。
@@ -61,9 +61,11 @@ Windows 请先把 EXE 保存到 `Downloads`、`Apps` 等稳定目录，再双击
 
 选择自定义或便携位置时，系统配置目录会保留一个很小的 `storage.json` 位置索引，供独立 Hook 在桌面程序退出后找到数据。该文件不包含 Bark Key、AES 密钥或通知正文。
 
+重新下载应用时，只有索引指向的 `settings.json` 仍然存在且有效才会自动复用。旧目录已被删除或设置不完整时，应用不会重建旧目录，而是重新显示位置选择页；操作系统凭据库中的密钥仍会保留。
+
 ### 3. 连接 Bark
 
-在首次设置向导中填写 Bark 服务器与 Device Key，发送测试通知。支持官方 Bark、自托管 Bark、HTTP/HTTPS、声音、分组、级别、图标、跳转 URL，以及 AES-128/256-CBC 加密。
+在首次设置向导中确认自动识别的来源设备名，填写 Bark 服务器与 Device Key，然后发送测试通知。标题固定为“设备名 · 项目名”，Hook 直接提供会话名时才显示副标题。除声音、分组、级别、图标、图片和跳转 URL 外，还支持 Markdown、音量、角标、重复铃声、复制、历史保留、点击动作、稳定 ID、远端更新/删除，以及 AES-128/256-CBC 加密。
 
 桌面版密钥保存在操作系统凭据库中：
 
@@ -78,7 +80,7 @@ Linux 没有可用 Secret Service 时，应用会明确提示凭据库不可用�
 1. 打开 CodexNotify 的“系统”页面。
 2. 点击“安装 / 修复”。
 3. 回到 Codex，输入 `/hooks`。
-4. 分别选择 `PermissionRequest` 和 `Stop`，按 `T` 完成信任。
+4. 分别选择 `PreToolUse`、`PermissionRequest` 和 `Stop`，按 `T` 完成信任。
 5. 回到 CodexNotify，点击“检查信任”。
 
 CodexNotify 不会代替用户写入信任状态。Hook 配置发生变化后，Codex 可能要求重新审核。
@@ -91,21 +93,25 @@ Windows Hook 使用 PowerShell 调用语法生成 `commandWindows`，可正确�
 
 ## Linux 无桌面版
 
-CLI 产物是完全静态的 x86_64 Linux 可执行文件，不要求桌面组件。首次安装示例：
+CLI 产物是完全静态的 x86_64 Linux 可执行文件，不要求桌面组件。安装只需要一个环境变量：`CODEX_NOTIFY_BARK_KEY`。
 
 ```bash
-chmod +x codex-notify-Linux-CLI-x86_64
 mkdir -p ~/.local/bin
-mv codex-notify-Linux-CLI-x86_64 ~/.local/bin/codex-notify
+curl -fL https://github.com/Xiiiing/CodexNotify/releases/latest/download/codex-notify-Linux-CLI-x86_64 \
+  -o ~/.local/bin/codex-notify
+chmod +x ~/.local/bin/codex-notify
 
-codex-notify init
 export CODEX_NOTIFY_BARK_KEY='你的 Bark Device Key'
+export PATH="$HOME/.local/bin:$PATH"
+codex-notify init
 codex-notify test
 codex-notify hook install
 codex-notify hook status
 ```
 
-然后在 Codex 中输入 `/hooks`，信任 `PermissionRequest` 和 `Stop`。Codex 进程必须能够读取 `CODEX_NOTIFY_BARK_KEY` 环境变量；如启用 AES，可同时设置 `CODEX_NOTIFY_ENCRYPTION_KEY`。
+然后在 Codex 中输入 `/hooks`，信任 `PreToolUse`、`PermissionRequest` 和 `Stop`。每次从同一终端启动 Codex 即可；为了永久生效，将上面两个 `export` 加入 `~/.bashrc` 或 `~/.zshrc`。无需配置数据路径，也无需常驻 daemon；后续 Hook 事件会顺带处理失败重试。
+
+AES 加密、自定义数据目录和常驻重试服务均为可选高级能力，普通 Linux CLI 部署不需要它们。
 
 常用命令：
 
@@ -167,7 +173,9 @@ Hook 始终以成功协议响应 Codex；通知失败只会写入日志和可靠
 
 ## 功能概览
 
-- Bark 服务器、标题、正文模式、声音、分组、级别、图标和跳转链接
+- 自动识别且可编辑的设备名，以及固定的“设备名 · 项目名”通知标题
+- `Stop`、普通输入请求和权限审批提醒，可选 Hook 会话名副标题
+- Bark Markdown、图片、音量、角标、铃声、复制、历史、点击动作、远端更新与删除
 - AES-128/256-CBC 加密推送
 - 全部项目、包含规则、排除规则和项目别名
 - 中文/英文界面、系统主题、浅色和深色主题

@@ -50,6 +50,8 @@ fn installs_itself_as_the_codex_hook() {
     let hooks = std::fs::read_to_string(codex_home.path().join("hooks.json")).unwrap();
     assert!(hooks.contains("--codex-notify-hook"));
     assert!(hooks.contains("PermissionRequest"));
+    assert!(hooks.contains("PreToolUse"));
+    assert!(hooks.contains("request_user_input"));
     assert!(hooks.contains("Stop"));
 
     let output = Command::new(env!("CARGO_BIN_EXE_codex-notify"))

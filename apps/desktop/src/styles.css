@@ -728,6 +728,11 @@ summary:focus-visible {
 .event-row time {
   text-align: right;
 }
+.event-actions {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+}
 .badge {
   display: inline-flex;
   width: max-content;

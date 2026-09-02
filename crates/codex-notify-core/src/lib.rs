@@ -12,8 +12,10 @@ pub mod store;
 pub use dispatcher::{dispatch_due, DispatchResult};
 pub use error::{CoreError, CoreResult};
 pub use hook_runtime::process_hook_input;
-pub use notification::{build_notification, should_notify, HookEvent, Notification};
-pub use paths::{AppPaths, StorageInfo, StorageMode};
+pub use notification::{
+    build_notification, redact_sensitive_text, should_notify, HookEvent, Notification,
+};
+pub use paths::{AppPaths, StorageInfo, StorageMode, StorageState};
 pub use settings::{AppSettings, ProjectRule};
 pub use store::{EventCounts, EventRecord, EventStatus, EventStore};
 

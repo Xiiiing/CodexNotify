@@ -295,7 +295,7 @@ export function App() {
         </div>
       </main>
       {!state.storage.configured ? (
-        <StorageSetup onError={setError} />
+        <StorageSetup storage={state.storage} onError={setError} />
       ) : (
         !settings.setupCompleted && (
           <Setup
@@ -518,6 +518,20 @@ function ActivityPanel({
       onError(message(value, t("unknownError")));
     }
   };
+  const deleteAllRemote = async () => {
+    try {
+      const result = await api.deleteAllRemote();
+      await refresh((filter as EventStatus) || undefined);
+      onNotice(
+        t("remoteDeletedAll", {
+          deleted: result.deleted,
+          failed: result.failed,
+        }),
+      );
+    } catch (value) {
+      onError(message(value, t("unknownError")));
+    }
+  };
   return (
     <Card
       title={t("activity")}
@@ -527,6 +541,16 @@ function ActivityPanel({
             onClick={() => void action(api.retryFailed, t("retryQueued"))}
           >
             {t("retryAll")}
+          </Button>
+          <Button
+            kind="danger"
+            onClick={() => {
+              if (window.confirm(t("remoteDeleteAllConfirm"))) {
+                void deleteAllRemote();
+              }
+            }}
+          >
+            {t("remoteDeleteAll")}
           </Button>
           <Button
             kind="danger"
@@ -563,6 +587,17 @@ function ActivityPanel({
       <EventList
         events={events}
         retry={(id) => void action(() => api.retry(id), t("retryQueued"))}
+        updateRemote={(id, currentBody) => {
+          const body = window.prompt(t("remoteUpdatePrompt"), currentBody);
+          if (body !== null && body.trim()) {
+            void action(() => api.updateRemote(id, body), t("remoteUpdated"));
+          }
+        }}
+        deleteRemote={(id) => {
+          if (window.confirm(t("remoteDeleteConfirm"))) {
+            void action(() => api.deleteRemote(id), t("remoteDeleted"));
+          }
+        }}
       />
     </Card>
   );
@@ -570,9 +605,13 @@ function ActivityPanel({
 function EventList({
   events,
   retry,
+  updateRemote,
+  deleteRemote,
 }: {
   events: EventRecord[];
   retry: (id: number) => void;
+  updateRemote: (id: number, body: string) => void;
+  deleteRemote: (id: number) => void;
 }) {
   const { t } = useTranslation();
   if (!events.length)
@@ -591,6 +630,7 @@ function EventList({
           <div className="event-main">
             <strong>{event.project || "Codex"}</strong>
             <span>{event.subtitle || event.eventType}</span>
+            {event.remoteDeletedAt && <small>{t("remoteDeleted")}</small>}
             {event.error && <small>{event.error}</small>}
           </div>
           <time>{new Date(event.createdAt * 1000).toLocaleString()}</time>
@@ -598,7 +638,19 @@ function EventList({
             {t(`event${event.status[0].toUpperCase()}${event.status.slice(1)}`)}
           </Badge>
           {event.status === "failed" && (
-            <Button onClick={() => retry(event.id)}>{t("retry")}</Button>
+            <div className="event-actions">
+              <Button onClick={() => retry(event.id)}>{t("retry")}</Button>
+            </div>
+          )}
+          {event.status === "sent" && !event.remoteDeletedAt && (
+            <div className="event-actions">
+              <Button onClick={() => updateRemote(event.id, event.body)}>
+                {t("remoteUpdate")}
+              </Button>
+              <Button kind="danger" onClick={() => deleteRemote(event.id)}>
+                {t("remoteDelete")}
+              </Button>
+            </div>
           )}
         </div>
       ))}
@@ -721,12 +773,11 @@ function Delivery({
         </Card>
         <Card title={t("message")}>
           <div className="form-grid">
-            <Field label={t("titleTemplate")}>
+            <Field label={t("sourceDeviceName")} hint={t("sourceDeviceNameHint")}>
               <input
-                value={settings.notificationTitle}
-                onChange={(event) =>
-                  update("notificationTitle", event.target.value)
-                }
+                value={settings.deviceName}
+                maxLength={100}
+                onChange={(event) => update("deviceName", event.target.value)}
               />
             </Field>
             <Field label={t("bodyMode")}>
@@ -811,12 +862,118 @@ function Delivery({
                   onChange={(event) => update("barkIcon", event.target.value)}
                 />
               </Field>
+              <Field label={t("barkImage")}>
+                <input
+                  value={settings.barkImage}
+                  onChange={(event) => update("barkImage", event.target.value)}
+                />
+              </Field>
               <Field label="Click URL">
                 <input
                   value={settings.clickUrl}
                   onChange={(event) => update("clickUrl", event.target.value)}
                 />
               </Field>
+              <Field label={t("barkVolume")}>
+                <input
+                  type="number"
+                  min="0"
+                  max="10"
+                  value={settings.barkVolume ?? ""}
+                  onChange={(event) =>
+                    update(
+                      "barkVolume",
+                      event.target.value === ""
+                        ? undefined
+                        : Number(event.target.value),
+                    )
+                  }
+                />
+              </Field>
+              <Field label={t("barkBadge")}>
+                <input
+                  type="number"
+                  value={settings.barkBadge ?? ""}
+                  onChange={(event) =>
+                    update(
+                      "barkBadge",
+                      event.target.value === ""
+                        ? undefined
+                        : Number(event.target.value),
+                    )
+                  }
+                />
+              </Field>
+              <Field label={t("barkCopy")}>
+                <input
+                  value={settings.barkCopy}
+                  onChange={(event) => update("barkCopy", event.target.value)}
+                />
+              </Field>
+              <Field label={t("barkArchive")}>
+                <select
+                  value={
+                    settings.barkArchive === undefined
+                      ? "inherit"
+                      : settings.barkArchive
+                        ? "yes"
+                        : "no"
+                  }
+                  onChange={(event) =>
+                    update(
+                      "barkArchive",
+                      event.target.value === "inherit"
+                        ? undefined
+                        : event.target.value === "yes",
+                    )
+                  }
+                >
+                  <option value="inherit">{t("barkDefault")}</option>
+                  <option value="yes">{t("archiveYes")}</option>
+                  <option value="no">{t("archiveNo")}</option>
+                </select>
+              </Field>
+              <Field label={t("barkTtl")}>
+                <input
+                  type="number"
+                  min="1"
+                  value={settings.barkTtl ?? ""}
+                  onChange={(event) =>
+                    update(
+                      "barkTtl",
+                      event.target.value === ""
+                        ? undefined
+                        : Number(event.target.value),
+                    )
+                  }
+                />
+              </Field>
+              <Field label={t("barkAction")}>
+                <select
+                  value={settings.barkAction}
+                  onChange={(event) => update("barkAction", event.target.value)}
+                >
+                  <option value="">{t("barkDefault")}</option>
+                  <option value="alert">alert</option>
+                </select>
+              </Field>
+            </div>
+            <div className="setting-list">
+              <Switch
+                checked={settings.barkMarkdown}
+                onChange={(value) => update("barkMarkdown", value)}
+                label={t("barkMarkdown")}
+              />
+              <Switch
+                checked={settings.barkCall}
+                onChange={(value) => update("barkCall", value)}
+                label={t("barkCall")}
+              />
+              <Switch
+                checked={settings.barkAutoCopy}
+                onChange={(value) => update("barkAutoCopy", value)}
+                label={t("barkAutoCopy")}
+              />
             </div>
             <div className="advanced-section">
               <Switch
@@ -863,10 +1020,7 @@ function Delivery({
               <div>
                 <small>CODEXNOTIFY · NOW</small>
                 <strong>
-                  {settings.notificationTitle.replace(
-                    "{project}",
-                    "CodexNotify",
-                  )}
+                  {settings.deviceName} · CodexNotify
                 </strong>
                 <p>
                   {settings.messageMode === "fixed"
@@ -1074,6 +1228,11 @@ function Rules({
                 checked={settings.permissionNotifications}
                 onChange={(value) => update("permissionNotifications", value)}
                 label={t("permissionAlerts")}
+              />
+              <Switch
+                checked={settings.userInputNotifications}
+                onChange={(value) => update("userInputNotifications", value)}
+                label={t("userInputAlerts")}
               />
               <Switch
                 checked={settings.redactSensitive}
@@ -1498,13 +1657,23 @@ function SetupSteps({ active }: { active: number }) {
 }
 
 export function StorageSetup({
+  storage,
   onError,
 }: {
+  storage: AppState["storage"];
   onError: (value: string) => void;
 }) {
   const { t } = useTranslation();
-  const [mode, setMode] = useState<StorageMode>("default");
-  const [customPath, setCustomPath] = useState("");
+  const [mode, setMode] = useState<StorageMode>(
+    storage.state === "stale" && storage.mode !== "environment"
+      ? storage.mode
+      : "default",
+  );
+  const [customPath, setCustomPath] = useState(
+    storage.state === "stale" && storage.mode === "custom"
+      ? storage.staleRoot || ""
+      : "",
+  );
   const [busy, setBusy] = useState(false);
   const choose = async () => {
     const selected = await open({
@@ -1540,6 +1709,11 @@ export function StorageSetup({
         <div className="setup-copy">
           <h2>{t("storageSetupTitle")}</h2>
           <p>{t("storageSetupBody")}</p>
+          {storage.state === "stale" && (
+            <p className="migration-warning">
+              {t("storageStale", { path: storage.staleRoot || "" })}
+            </p>
+          )}
         </div>
         <div className="storage-options">
           {(["default", "portable", "custom"] as StorageMode[]).map((value) => (
@@ -1752,6 +1926,13 @@ function Setup({
               <p>{t("setupBarkBody")}</p>
             </div>
             <div className="stack">
+              <Field label={t("sourceDeviceName")} hint={t("sourceDeviceNameHint")}>
+                <input
+                  value={settings.deviceName}
+                  maxLength={100}
+                  onChange={(event) => update("deviceName", event.target.value)}
+                />
+              </Field>
               <Field label={t("barkServer")}>
                 <input
                   value={settings.barkServer}

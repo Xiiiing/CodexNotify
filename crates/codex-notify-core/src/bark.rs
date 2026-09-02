@@ -39,17 +39,50 @@ fn endpoint(server: &str, key: &str) -> CoreResult<Url> {
 }
 
 fn payload(notification: &Notification) -> Value {
-    let mut value = json!({"title":notification.title,"body":notification.body,"group":notification.group,"level":notification.level});
+    let mut value = json!({
+        "title": notification.title,
+        "body": notification.body,
+        "group": notification.group,
+        "level": notification.level,
+        "id": notification.bark_id,
+    });
     let object = value.as_object_mut().unwrap();
     for (key, item) in [
         ("subtitle", &notification.subtitle),
         ("sound", &notification.sound),
         ("icon", &notification.icon),
+        ("image", &notification.image),
         ("url", &notification.url),
+        ("copy", &notification.copy),
+        ("action", &notification.action),
     ] {
         if !item.is_empty() {
             object.insert(key.into(), Value::String(item.clone()));
         }
+    }
+    if notification.markdown {
+        object.insert("markdown".into(), Value::String(notification.body.clone()));
+    }
+    if let Some(volume) = notification.volume {
+        object.insert("volume".into(), Value::Number(volume.into()));
+    }
+    if let Some(badge) = notification.badge {
+        object.insert("badge".into(), Value::Number(badge.into()));
+    }
+    if notification.call {
+        object.insert("call".into(), Value::String("1".into()));
+    }
+    if notification.auto_copy {
+        object.insert("autoCopy".into(), Value::String("1".into()));
+    }
+    if let Some(archive) = notification.archive {
+        object.insert(
+            "isArchive".into(),
+            Value::Number(if archive { 1 } else { 0 }.into()),
+        );
+    }
+    if let Some(ttl) = notification.ttl {
+        object.insert("ttl".into(), Value::Number(ttl.into()));
     }
     value
 }
@@ -185,6 +218,45 @@ fn send_with_timeouts(
     timeout: Duration,
     connect_timeout: Option<Duration>,
 ) -> CoreResult<Value> {
+    send_payload_with_timeouts(
+        payload(notification),
+        settings,
+        bark_key,
+        encryption_key,
+        timeout,
+        connect_timeout,
+    )
+}
+
+pub fn delete(
+    bark_id: &str,
+    settings: &AppSettings,
+    bark_key: &str,
+    encryption_key: Option<&str>,
+) -> CoreResult<Value> {
+    if bark_id.trim().is_empty() {
+        return Err(CoreError::InvalidConfig(
+            "Bark notification id is missing".into(),
+        ));
+    }
+    send_payload_with_timeouts(
+        json!({"id": bark_id, "delete": "1"}),
+        settings,
+        bark_key,
+        encryption_key,
+        Duration::from_secs(settings.request_timeout),
+        None,
+    )
+}
+
+fn send_payload_with_timeouts(
+    payload: Value,
+    settings: &AppSettings,
+    bark_key: &str,
+    encryption_key: Option<&str>,
+    timeout: Duration,
+    connect_timeout: Option<Duration>,
+) -> CoreResult<Value> {
     let mut builder = reqwest::blocking::Client::builder()
         .timeout(timeout)
         .user_agent(concat!("CodexNotify/", env!("CARGO_PKG_VERSION")));
@@ -197,13 +269,11 @@ fn send_with_timeouts(
         let key = encryption_key.filter(|v| !v.is_empty()).ok_or_else(|| {
             CoreError::InvalidConfig("Bark encryption is enabled but its key is missing".into())
         })?;
-        client.post(url).form(&encrypt(
-            &payload(notification),
-            key,
-            &settings.encryption_algorithm,
-        )?)
+        client
+            .post(url)
+            .form(&encrypt(&payload, key, &settings.encryption_algorithm)?)
     } else {
-        client.post(url).json(&payload(notification))
+        client.post(url).json(&payload)
     };
     let response = request.send().map_err(request_error)?;
     let status = response.status();
@@ -215,6 +285,84 @@ fn send_with_timeouts(
 mod tests {
     use super::*;
     use cbc::cipher::{BlockDecryptMut, KeyIvInit};
+
+    fn sample_notification() -> Notification {
+        Notification {
+            event_key: "event".into(),
+            bark_id: "event".into(),
+            event_type: "Stop".into(),
+            session_id: "session".into(),
+            turn_id: "turn".into(),
+            project: "CodexNotify".into(),
+            cwd: "/work/CodexNotify".into(),
+            title: "Studio-PC · CodexNotify".into(),
+            subtitle: String::new(),
+            body: "**Done**".into(),
+            group: "Codex".into(),
+            level: "critical".into(),
+            sound: "minuet".into(),
+            icon: "https://example.com/icon.png".into(),
+            url: "https://example.com".into(),
+            markdown: true,
+            image: "https://example.com/image.png".into(),
+            volume: Some(8),
+            badge: Some(3),
+            call: true,
+            auto_copy: true,
+            copy: "Done".into(),
+            archive: Some(true),
+            ttl: Some(3600),
+            action: "alert".into(),
+            suppressed: false,
+            suppress_reason: String::new(),
+        }
+    }
+
+    #[test]
+    fn payload_includes_all_enabled_bark_features() {
+        let value = payload(&sample_notification());
+        assert_eq!(value["id"], "event");
+        assert_eq!(value["markdown"], "**Done**");
+        assert_eq!(value["image"], "https://example.com/image.png");
+        assert_eq!(value["volume"], 8);
+        assert_eq!(value["badge"], 3);
+        assert_eq!(value["call"], "1");
+        assert_eq!(value["autoCopy"], "1");
+        assert_eq!(value["copy"], "Done");
+        assert_eq!(value["isArchive"], 1);
+        assert_eq!(value["ttl"], 3600);
+        assert_eq!(value["action"], "alert");
+    }
+
+    #[test]
+    fn payload_omits_disabled_optional_bark_features() {
+        let mut notification = sample_notification();
+        notification.markdown = false;
+        notification.image.clear();
+        notification.volume = None;
+        notification.badge = None;
+        notification.call = false;
+        notification.auto_copy = false;
+        notification.copy.clear();
+        notification.archive = None;
+        notification.ttl = None;
+        notification.action.clear();
+        let value = payload(&notification);
+        for field in [
+            "markdown",
+            "image",
+            "volume",
+            "badge",
+            "call",
+            "autoCopy",
+            "copy",
+            "isArchive",
+            "ttl",
+            "action",
+        ] {
+            assert!(value.get(field).is_none(), "unexpected field {field}");
+        }
+    }
 
     #[test]
     fn aes_form_round_trips() {
@@ -251,6 +399,7 @@ mod tests {
         };
         let notification = Notification {
             event_key: "test".into(),
+            bark_id: "test".into(),
             event_type: "Test".into(),
             session_id: String::new(),
             turn_id: String::new(),
@@ -264,11 +413,44 @@ mod tests {
             sound: String::new(),
             icon: String::new(),
             url: String::new(),
+            markdown: false,
+            image: String::new(),
+            volume: None,
+            badge: None,
+            call: false,
+            auto_copy: false,
+            copy: String::new(),
+            archive: None,
+            ttl: None,
+            action: String::new(),
             suppressed: false,
             suppress_reason: String::new(),
         };
         let response = send(&notification, &settings, "device-key", None).unwrap();
         assert_eq!(response["code"], 200);
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn deletes_a_remote_notification_by_id() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            use std::io::{Read, Write};
+            let mut request = [0_u8; 4096];
+            let length = socket.read(&mut request).unwrap();
+            let text = String::from_utf8_lossy(&request[..length]);
+            assert!(text.starts_with("POST /device-key HTTP/1.1"));
+            assert!(text.contains("\"id\":\"event-123\""));
+            assert!(text.contains("\"delete\":\"1\""));
+            socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 12\r\nConnection: close\r\n\r\n{\"code\":200}").unwrap();
+        });
+        let settings = AppSettings {
+            bark_server: format!("http://{address}"),
+            ..AppSettings::default()
+        };
+        delete("event-123", &settings, "device-key", None).unwrap();
         server.join().unwrap();
     }
 
@@ -317,6 +499,7 @@ mod tests {
         };
         let notification = Notification {
             event_key: "timeout-test".into(),
+            bark_id: "timeout-test".into(),
             event_type: "Test".into(),
             session_id: String::new(),
             turn_id: String::new(),
@@ -330,6 +513,16 @@ mod tests {
             sound: String::new(),
             icon: String::new(),
             url: String::new(),
+            markdown: false,
+            image: String::new(),
+            volume: None,
+            badge: None,
+            call: false,
+            auto_copy: false,
+            copy: String::new(),
+            archive: None,
+            ttl: None,
+            action: String::new(),
             suppressed: false,
             suppress_reason: String::new(),
         };

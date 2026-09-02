@@ -21,8 +21,10 @@ Usage:
   codex-notify events clear
   codex-notify daemon [--once]
 
-Headless secrets:
+Required environment variable:
   CODEX_NOTIFY_BARK_KEY
+
+Optional when Bark AES encryption is enabled:
   CODEX_NOTIFY_ENCRYPTION_KEY
 "#;
 
@@ -147,9 +149,38 @@ fn set_setting(settings: &mut AppSettings, key: &str, value: &str) -> CoreResult
         "group" => settings.group = value.into(),
         "level" => settings.level = value.into(),
         "sound" => settings.sound = value.into(),
+        "bark-markdown" => settings.bark_markdown = boolean()?,
+        "bark-image" => settings.bark_image = value.into(),
+        "bark-call" => settings.bark_call = boolean()?,
+        "bark-auto-copy" => settings.bark_auto_copy = boolean()?,
+        "bark-copy" => settings.bark_copy = value.into(),
+        "bark-action" => settings.bark_action = value.into(),
+        "bark-volume" => {
+            settings.bark_volume = Some(
+                value
+                    .parse()
+                    .map_err(|_| CoreError::InvalidConfig("bark-volume expects a number".into()))?,
+            )
+        }
+        "bark-badge" => {
+            settings.bark_badge = Some(
+                value
+                    .parse()
+                    .map_err(|_| CoreError::InvalidConfig("bark-badge expects a number".into()))?,
+            )
+        }
+        "bark-archive" => settings.bark_archive = Some(boolean()?),
+        "bark-ttl" => {
+            settings.bark_ttl = Some(
+                value
+                    .parse()
+                    .map_err(|_| CoreError::InvalidConfig("bark-ttl expects a number".into()))?,
+            )
+        }
         "message-mode" => settings.message_mode = value.into(),
-        "title" => settings.notification_title = value.into(),
+        "device-name" => settings.device_name = value.into(),
         "permission-notifications" => settings.permission_notifications = boolean()?,
+        "user-input-notifications" => settings.user_input_notifications = boolean()?,
         "redact-sensitive" => settings.redact_sensitive = boolean()?,
         "quiet-hours-enabled" => settings.quiet_hours_enabled = boolean()?,
         "quiet-start" => settings.quiet_start = value.into(),
@@ -185,7 +216,7 @@ fn hook(args: &[String]) -> CoreResult<()> {
             if let Some(path) = backup {
                 println!("backup: {}", path.display());
             }
-            println!("Open Codex /hooks and trust Stop and PermissionRequest.");
+            println!("Open Codex /hooks and trust Stop, PermissionRequest, and PreToolUse.");
         }
         Some("status") => {
             let status = hooks::status(&binary)?;
@@ -218,14 +249,16 @@ fn test_notification(paths: &AppPaths) -> CoreResult<()> {
     } else {
         None
     };
+    let event_key = format!("cli-test-{}", chrono::Utc::now().timestamp_millis());
     let notification = Notification {
-        event_key: format!("cli-test-{}", chrono::Utc::now().timestamp_millis()),
+        bark_id: event_key.clone(),
+        event_key,
         event_type: "Test".into(),
         session_id: String::new(),
         turn_id: String::new(),
         project: "CodexNotify".into(),
         cwd: String::new(),
-        title: "CodexNotify".into(),
+        title: format!("{} · CodexNotify", settings.device_name),
         subtitle: "Headless test".into(),
         body: "Your CodexNotify headless connection is working.".into(),
         group: settings.group.clone(),
@@ -233,6 +266,16 @@ fn test_notification(paths: &AppPaths) -> CoreResult<()> {
         sound: settings.sound.clone(),
         icon: settings.bark_icon.clone(),
         url: settings.click_url.clone(),
+        markdown: settings.bark_markdown,
+        image: settings.bark_image.clone(),
+        volume: settings.bark_volume,
+        badge: settings.bark_badge,
+        call: settings.bark_call,
+        auto_copy: settings.bark_auto_copy,
+        copy: settings.bark_copy.clone(),
+        archive: settings.bark_archive,
+        ttl: settings.bark_ttl,
+        action: settings.bark_action.clone(),
         suppressed: false,
         suppress_reason: String::new(),
     };

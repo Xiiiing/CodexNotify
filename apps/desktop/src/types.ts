@@ -8,6 +8,7 @@ export interface ProjectRule {
 export interface AppSettings {
   schemaVersion: number;
   enabled: boolean;
+  deviceName: string;
   barkServer: string;
   group: string;
   level: string;
@@ -16,14 +17,24 @@ export interface AppSettings {
   projects: ProjectRule[];
   messageMode: string;
   fixedMessage: string;
-  notificationTitle: string;
   permissionNotifications: boolean;
+  userInputNotifications: boolean;
   redactSensitive: boolean;
   quietHoursEnabled: boolean;
   quietStart: string;
   quietEnd: string;
   quietAction: string;
   barkIcon: string;
+  barkMarkdown: boolean;
+  barkImage: string;
+  barkVolume?: number;
+  barkBadge?: number;
+  barkCall: boolean;
+  barkAutoCopy: boolean;
+  barkCopy: string;
+  barkArchive?: boolean;
+  barkTtl?: number;
+  barkAction: string;
   clickUrl: string;
   requestTimeout: number;
   retryLimit: number;
@@ -61,14 +72,17 @@ export interface SecretStatus {
   encryptionKeyConfigured: boolean;
 }
 export type StorageMode = "default" | "portable" | "custom" | "environment";
+export type StorageState = "unconfigured" | "configured" | "stale";
 export interface StorageInfo {
   configured: boolean;
+  state: StorageState;
   mode: StorageMode;
   root: string;
   configDir: string;
   dataDir: string;
   logDir: string;
   locatorFile: string;
+  staleRoot?: string;
 }
 export interface HookHealth {
   status?: "success" | "error";
@@ -103,6 +117,13 @@ export interface EventRecord {
   createdAt: number;
   sentAt?: number;
   error: string;
+  barkId: string;
+  remoteUpdatedAt?: number;
+  remoteDeletedAt?: number;
+}
+export interface RemoteDeleteResult {
+  deleted: number;
+  failed: number;
 }
 export interface Diagnostics {
   storage: StorageInfo;

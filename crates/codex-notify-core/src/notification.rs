@@ -14,6 +14,18 @@ pub struct HookEvent {
     pub session_id: String,
     #[serde(default, alias = "turnId")]
     pub turn_id: String,
+    #[serde(
+        default,
+        alias = "sessionName",
+        deserialize_with = "deserialize_nullable_string"
+    )]
+    pub session_name: String,
+    #[serde(
+        default,
+        alias = "threadName",
+        deserialize_with = "deserialize_nullable_string"
+    )]
+    pub thread_name: String,
     #[serde(default, alias = "toolUseId")]
     pub tool_use_id: String,
     #[serde(default)]
@@ -43,6 +55,8 @@ where
 #[serde(rename_all = "camelCase")]
 pub struct Notification {
     pub event_key: String,
+    #[serde(default)]
+    pub bark_id: String,
     pub event_type: String,
     pub session_id: String,
     pub turn_id: String,
@@ -56,6 +70,26 @@ pub struct Notification {
     pub sound: String,
     pub icon: String,
     pub url: String,
+    #[serde(default)]
+    pub markdown: bool,
+    #[serde(default)]
+    pub image: String,
+    #[serde(default)]
+    pub volume: Option<u8>,
+    #[serde(default)]
+    pub badge: Option<i64>,
+    #[serde(default)]
+    pub call: bool,
+    #[serde(default)]
+    pub auto_copy: bool,
+    #[serde(default)]
+    pub copy: String,
+    #[serde(default)]
+    pub archive: Option<bool>,
+    #[serde(default)]
+    pub ttl: Option<u64>,
+    #[serde(default)]
+    pub action: String,
     pub suppressed: bool,
     pub suppress_reason: String,
 }
@@ -174,7 +208,7 @@ fn classify(message: &str) -> (&'static str, &'static str) {
     ("Turn completed", "✅")
 }
 
-fn redact(text: &str) -> String {
+pub fn redact_sensitive_text(text: &str) -> String {
     let patterns = [
         (
             r"(?i)\b(?:sk|rk|pk)-[A-Za-z0-9_-]{12,}\b",
@@ -223,11 +257,99 @@ fn quiet_at(settings: &AppSettings, now: NaiveTime, start: NaiveTime, end: Naive
     }
 }
 
-fn render_template(template: &str, project: &str, status: &str, icon: &str) -> String {
+fn render_template(
+    template: &str,
+    device: &str,
+    project: &str,
+    status: &str,
+    icon: &str,
+) -> String {
     template
+        .replace("{device}", device)
         .replace("{project}", project)
         .replace("{status}", status)
         .replace("{icon}", icon)
+}
+
+fn is_user_input_request(event: &HookEvent) -> bool {
+    event.hook_event_name == "PreToolUse"
+        && matches!(
+            event.tool_name.as_str(),
+            "request_user_input" | "requestUserInput"
+        )
+}
+
+fn input_request_body(event: &HookEvent) -> String {
+    let mut sections = Vec::new();
+    if let Some(questions) = event.tool_input.get("questions").and_then(Value::as_array) {
+        for question in questions {
+            let header = question
+                .get("header")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .trim();
+            let prompt = question
+                .get("question")
+                .or_else(|| question.get("prompt"))
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .trim();
+            let mut section = if header.is_empty() {
+                prompt.to_owned()
+            } else if prompt.is_empty() {
+                header.to_owned()
+            } else {
+                format!("{header}: {prompt}")
+            };
+            if let Some(options) = question.get("options").and_then(Value::as_array) {
+                let labels = options
+                    .iter()
+                    .filter_map(|option| {
+                        let label = option
+                            .get("label")
+                            .and_then(Value::as_str)
+                            .or_else(|| option.as_str())?;
+                        let description = option
+                            .get("description")
+                            .and_then(Value::as_str)
+                            .unwrap_or("")
+                            .trim();
+                        Some(if description.is_empty() {
+                            label.to_owned()
+                        } else {
+                            format!("{label} — {description}")
+                        })
+                    })
+                    .filter(|label| !label.trim().is_empty())
+                    .collect::<Vec<_>>();
+                if !labels.is_empty() {
+                    if !section.is_empty() {
+                        section.push('\n');
+                    }
+                    section.push_str("• ");
+                    section.push_str(&labels.join("\n• "));
+                }
+            }
+            if !section.is_empty() {
+                sections.push(section);
+            }
+        }
+    }
+    if sections.is_empty() {
+        if let Some(prompt) = event
+            .tool_input
+            .get("question")
+            .or_else(|| event.tool_input.get("prompt"))
+            .and_then(Value::as_str)
+        {
+            sections.push(prompt.trim().to_owned());
+        }
+    }
+    if sections.is_empty() {
+        "Codex needs your input to continue.".into()
+    } else {
+        sections.join("\n\n")
+    }
 }
 
 fn permission_body(event: &HookEvent, minimal: bool) -> String {
@@ -258,6 +380,9 @@ fn permission_body(event: &HookEvent, minimal: bool) -> String {
 fn body_for(event: &HookEvent, settings: &AppSettings, status: &str) -> String {
     if event.hook_event_name == "PermissionRequest" {
         return permission_body(event, settings.message_mode == "minimal");
+    }
+    if is_user_input_request(event) {
+        return input_request_body(event);
     }
     if settings.message_mode == "minimal" {
         return format!("Codex status: {status}.");
@@ -290,12 +415,14 @@ pub fn build_notification(event: &HookEvent, settings: &AppSettings) -> Notifica
     let project = project_name(&event.cwd, settings);
     let (status, icon) = if event.hook_event_name == "PermissionRequest" {
         ("Waiting for approval", "🔐")
+    } else if is_user_input_request(event) {
+        ("Waiting for input", "❓")
     } else {
         classify(&event.last_assistant_message)
     };
     let mut body = body_for(event, settings, status);
     if settings.redact_sensitive {
-        body = redact(&body);
+        body = redact_sensitive_text(&body);
     }
     let mut hasher = Sha256::new();
     hasher.update(event.hook_event_name.as_bytes());
@@ -303,7 +430,7 @@ pub fn build_notification(event: &HookEvent, settings: &AppSettings) -> Notifica
     hasher.update(event.session_id.as_bytes());
     hasher.update(b"|");
     hasher.update(event.turn_id.as_bytes());
-    if event.hook_event_name == "PermissionRequest" {
+    if event.hook_event_name == "PermissionRequest" || is_user_input_request(event) {
         hasher.update(b"|");
         if event.tool_use_id.is_empty() {
             hasher.update(event.tool_name.as_bytes());
@@ -318,8 +445,10 @@ pub fn build_notification(event: &HookEvent, settings: &AppSettings) -> Notifica
     let mut suppressed = false;
     let mut suppress_reason = String::new();
     if quiet_now(settings) {
-        let important =
-            event.hook_event_name == "PermissionRequest" || status == "Execution failed";
+        let important = event.hook_event_name == "PermissionRequest"
+            || is_user_input_request(event)
+            || status == "Waiting for input"
+            || status == "Execution failed";
         if settings.quiet_action == "pause"
             || (settings.quiet_action == "importantOnly" && !important)
         {
@@ -330,24 +459,47 @@ pub fn build_notification(event: &HookEvent, settings: &AppSettings) -> Notifica
             sound.clear();
         }
     }
+    let event_key = format!("{:x}", hasher.finalize());
     Notification {
-        event_key: format!("{:x}", hasher.finalize()),
-        event_type: event.hook_event_name.clone(),
+        bark_id: event_key.clone(),
+        event_key,
+        event_type: if is_user_input_request(event) || status == "Waiting for input" {
+            "UserInputRequest".into()
+        } else {
+            event.hook_event_name.clone()
+        },
         session_id: event.session_id.clone(),
         turn_id: event.turn_id.clone(),
         project: project.clone(),
         cwd: event.cwd.clone(),
-        title: format!(
-            "{icon} {}",
-            render_template(&settings.notification_title, &project, status, icon)
-        ),
-        subtitle: status.into(),
+        title: format!("{} · {}", settings.device_name.trim(), project),
+        subtitle: if event.session_name.trim().is_empty() {
+            event.thread_name.trim().to_owned()
+        } else {
+            event.session_name.trim().to_owned()
+        },
         body,
         group: settings.group.clone(),
         level,
         sound,
         icon: settings.bark_icon.clone(),
-        url: render_template(&settings.click_url, &project, status, icon),
+        url: render_template(
+            &settings.click_url,
+            settings.device_name.trim(),
+            &project,
+            status,
+            icon,
+        ),
+        markdown: settings.bark_markdown,
+        image: settings.bark_image.clone(),
+        volume: settings.bark_volume,
+        badge: settings.bark_badge,
+        call: settings.bark_call,
+        auto_copy: settings.bark_auto_copy,
+        copy: settings.bark_copy.clone(),
+        archive: settings.bark_archive,
+        ttl: settings.bark_ttl,
+        action: settings.bark_action.clone(),
         suppressed,
         suppress_reason,
     }
@@ -380,10 +532,9 @@ mod tests {
         }))
         .unwrap();
         assert_eq!(event.hook_event_name, "Stop");
-        assert_eq!(
-            build_notification(&event, &AppSettings::default()).subtitle,
-            "Waiting for input"
-        );
+        let notification = build_notification(&event, &AppSettings::default());
+        assert!(notification.subtitle.is_empty());
+        assert_eq!(notification.body, "请确认是否继续。");
     }
 
     #[test]
@@ -399,12 +550,60 @@ mod tests {
         .unwrap();
         assert!(event.last_assistant_message.is_empty());
         let notification = build_notification(&event, &AppSettings::default());
-        assert_eq!(notification.subtitle, "Turn completed");
+        assert!(notification.subtitle.is_empty());
         assert!(!notification.body.is_empty());
     }
     #[test]
+    fn request_user_input_uses_question_content_and_hook_session_name() {
+        let event: HookEvent = serde_json::from_value(serde_json::json!({
+            "hook_event_name": "PreToolUse",
+            "session_id": "session",
+            "turn_id": "turn",
+            "sessionName": "Release preparation",
+            "cwd": "/work/CodexNotify",
+            "tool_name": "request_user_input",
+            "tool_use_id": "question-1",
+            "tool_input": {
+                "questions": [{
+                    "question": "Which release channel should be used?",
+                    "options": [{"label":"Stable"},{"label":"Beta"}]
+                }]
+            }
+        }))
+        .unwrap();
+        let settings = AppSettings {
+            device_name: "Studio-PC".into(),
+            ..AppSettings::default()
+        };
+        let notification = build_notification(&event, &settings);
+        assert_eq!(notification.event_type, "UserInputRequest");
+        assert_eq!(notification.title, "Studio-PC · CodexNotify");
+        assert_eq!(notification.subtitle, "Release preparation");
+        assert!(notification.body.contains("Which release channel"));
+        assert!(notification.body.contains("• Stable"));
+        assert!(notification.body.contains("• Beta"));
+    }
+    #[test]
+    fn thread_name_is_used_only_when_session_name_is_absent() {
+        let event: HookEvent = serde_json::from_value(serde_json::json!({
+            "hook_event_name": "Stop",
+            "sessionName": "",
+            "threadName": "Hook-provided thread",
+            "cwd": "/work/demo",
+            "last_assistant_message": "Done"
+        }))
+        .unwrap();
+        assert_eq!(
+            build_notification(&event, &AppSettings::default()).subtitle,
+            "Hook-provided thread"
+        );
+    }
+    #[test]
     fn redacts_secrets() {
-        assert!(!redact("api_key=abcdef123456 user@example.com").contains("abcdef123456"));
+        assert!(
+            !redact_sensitive_text("api_key=abcdef123456 user@example.com")
+                .contains("abcdef123456")
+        );
     }
     #[test]
     fn permission_is_unique_by_tool() {

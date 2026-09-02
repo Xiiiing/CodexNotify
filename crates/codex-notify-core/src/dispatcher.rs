@@ -27,7 +27,10 @@ pub fn dispatch_due(
     };
     let mut results = vec![];
     for record in store.claim_due(limit)? {
-        let notification: Notification = serde_json::from_str(&record.payload_json)?;
+        let mut notification: Notification = serde_json::from_str(&record.payload_json)?;
+        if notification.bark_id.is_empty() {
+            notification.bark_id = record.event_key.clone();
+        }
         match bark::send(
             &notification,
             settings,

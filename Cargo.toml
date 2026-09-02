@@ -10,7 +10,7 @@ resolver = "2"
 [workspace.package]
 edition = "2021"
 license = "MIT"
-version = "1.1.0"
+version = "1.2.0"
 
 [workspace.dependencies]
 aes = "0.8"
@@ -20,6 +20,7 @@ chrono = { version = "0.4", features = ["clock", "serde"] }
 directories = "6"
 dunce = "1"
 keyring = { version = "4.2", features = ["v1"] }
+hostname = "0.4"
 rand = "0.8"
 regex = "1"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls-native-roots"] }

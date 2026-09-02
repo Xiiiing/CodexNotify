@@ -30,12 +30,23 @@ pub enum StorageMode {
 #[serde(rename_all = "camelCase")]
 pub struct StorageInfo {
     pub configured: bool,
+    pub state: StorageState,
     pub mode: StorageMode,
     pub root: String,
     pub config_dir: String,
     pub data_dir: String,
     pub log_dir: String,
     pub locator_file: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stale_root: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum StorageState {
+    Unconfigured,
+    Configured,
+    Stale,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -61,7 +72,15 @@ impl AppPaths {
             let paths = Self::from_root(&root);
             return Ok((
                 paths.clone(),
-                storage_info(true, StorageMode::Environment, &root, &paths, &locator_file),
+                storage_info(
+                    true,
+                    StorageState::Configured,
+                    StorageMode::Environment,
+                    &root,
+                    &paths,
+                    &locator_file,
+                    None,
+                ),
             ));
         }
 
@@ -69,18 +88,71 @@ impl AppPaths {
             if base.join(PORTABLE_MARKER).exists() {
                 let root = base.join(PORTABLE_DATA_DIR);
                 let paths = Self::from_root(&root);
+                if !matches!(storage_target_ready(&paths), Ok(true)) {
+                    let fallback_root = default_root(&default);
+                    return Ok((
+                        default.clone(),
+                        storage_info(
+                            false,
+                            StorageState::Stale,
+                            StorageMode::Portable,
+                            &fallback_root,
+                            &default,
+                            &locator_file,
+                            Some(&root),
+                        ),
+                    ));
+                }
                 return Ok((
                     paths.clone(),
-                    storage_info(true, StorageMode::Portable, &root, &paths, &locator_file),
+                    storage_info(
+                        true,
+                        StorageState::Configured,
+                        StorageMode::Portable,
+                        &root,
+                        &paths,
+                        &locator_file,
+                        None,
+                    ),
                 ));
             }
         }
 
         if locator_file.exists() {
-            let locator: StorageLocator = serde_json::from_slice(&std::fs::read(&locator_file)?)?;
+            let locator: StorageLocator = match std::fs::read(&locator_file)
+                .ok()
+                .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+            {
+                Some(locator) => locator,
+                None => {
+                    let root = default_root(&default);
+                    return Ok((
+                        default.clone(),
+                        storage_info(
+                            false,
+                            StorageState::Stale,
+                            StorageMode::Default,
+                            &root,
+                            &default,
+                            &locator_file,
+                            None,
+                        ),
+                    ));
+                }
+            };
             if locator.schema_version != STORAGE_SCHEMA_VERSION {
-                return Err(CoreError::InvalidConfig(
-                    "unsupported storage configuration schema".into(),
+                let root = default_root(&default);
+                return Ok((
+                    default.clone(),
+                    storage_info(
+                        false,
+                        StorageState::Stale,
+                        StorageMode::Default,
+                        &root,
+                        &default,
+                        &locator_file,
+                        None,
+                    ),
                 ));
             }
             let (paths, root) = match locator.mode {
@@ -99,22 +171,54 @@ impl AppPaths {
                     ))
                 }
             };
+            if !matches!(storage_target_ready(&paths), Ok(true)) {
+                let fallback_root = default_root(&default);
+                return Ok((
+                    default.clone(),
+                    storage_info(
+                        false,
+                        StorageState::Stale,
+                        locator.mode,
+                        &fallback_root,
+                        &default,
+                        &locator_file,
+                        Some(&root),
+                    ),
+                ));
+            }
             return Ok((
                 paths.clone(),
-                storage_info(true, locator.mode, &root, &paths, &locator_file),
+                storage_info(
+                    true,
+                    StorageState::Configured,
+                    locator.mode,
+                    &root,
+                    &paths,
+                    &locator_file,
+                    None,
+                ),
             ));
         }
 
-        let configured = default.settings_file().exists();
+        let target_state = storage_target_ready(&default);
+        let configured = matches!(target_state, Ok(true));
         let root = default_root(&default);
         Ok((
             default.clone(),
             storage_info(
                 configured,
+                if configured {
+                    StorageState::Configured
+                } else if target_state.is_err() {
+                    StorageState::Stale
+                } else {
+                    StorageState::Unconfigured
+                },
                 StorageMode::Default,
                 &root,
                 &default,
                 &locator_file,
+                None,
             ),
         ))
     }
@@ -137,8 +241,22 @@ impl AppPaths {
         verify_writable(&paths.data_dir)?;
         verify_writable(&paths.log_dir)?;
 
+        if !paths.settings_file().exists() {
+            crate::settings::AppSettings::default().save(&paths)?;
+        } else {
+            crate::settings::AppSettings::load(&paths)?;
+        }
+
         persist_storage(mode, &root, &default, &locator_file)?;
-        Ok(storage_info(true, mode, &root, &paths, &locator_file))
+        Ok(storage_info(
+            true,
+            StorageState::Configured,
+            mode,
+            &root,
+            &paths,
+            &locator_file,
+            None,
+        ))
     }
 
     /// Copies every non-secret application file to a new location, switches the shared locator,
@@ -178,7 +296,15 @@ impl AppPaths {
             return Err(error);
         }
         cleanup_previous(&current, &target, &default, &locator_file)?;
-        Ok(storage_info(true, mode, &root, &target, &locator_file))
+        Ok(storage_info(
+            true,
+            StorageState::Configured,
+            mode,
+            &root,
+            &target,
+            &locator_file,
+            None,
+        ))
     }
 
     pub fn system_default() -> CoreResult<Self> {
@@ -552,20 +678,51 @@ fn default_root(paths: &AppPaths) -> PathBuf {
 
 fn storage_info(
     configured: bool,
+    state: StorageState,
     mode: StorageMode,
     root: &Path,
     paths: &AppPaths,
     locator_file: &Path,
+    stale_root: Option<&Path>,
 ) -> StorageInfo {
     StorageInfo {
         configured,
+        state,
         mode,
         root: root.display().to_string(),
         config_dir: paths.config_dir.display().to_string(),
         data_dir: paths.data_dir.display().to_string(),
         log_dir: paths.log_dir.display().to_string(),
         locator_file: locator_file.display().to_string(),
+        stale_root: stale_root.map(|path| path.display().to_string()),
     }
+}
+
+fn storage_target_ready(paths: &AppPaths) -> CoreResult<bool> {
+    let settings = paths.settings_file();
+    if !settings.is_file() {
+        return Ok(false);
+    }
+    let value: serde_json::Value = serde_json::from_slice(&std::fs::read(settings)?)?;
+    let schema = value
+        .get("schemaVersion")
+        .or_else(|| value.get("schema_version"))
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| CoreError::InvalidConfig("settings schema is missing".into()))?;
+    if !matches!(schema, 1 | 2) {
+        return Err(CoreError::InvalidConfig(
+            "unsupported settings schema".into(),
+        ));
+    }
+    let mut parsed: crate::settings::AppSettings = serde_json::from_value(value)?;
+    if parsed.schema_version == 1 {
+        parsed.schema_version = 2;
+        if parsed.device_name.trim().is_empty() {
+            parsed.device_name = crate::settings::detected_device_name();
+        }
+    }
+    parsed.validate()?;
+    Ok(true)
 }
 
 fn verify_writable(directory: &Path) -> CoreResult<()> {
@@ -609,6 +766,31 @@ mod tests {
         let json = serde_json::to_vec(&locator).unwrap();
         let decoded: StorageLocator = serde_json::from_slice(&json).unwrap();
         assert_eq!(decoded.root, locator.root);
+    }
+
+    #[test]
+    fn deleted_or_incomplete_storage_target_is_not_ready() {
+        let temporary = tempfile::tempdir().unwrap();
+        let paths = AppPaths::from_root(temporary.path().join("deleted-custom-root"));
+        assert!(!storage_target_ready(&paths).unwrap());
+        assert!(!paths.config_dir.exists());
+
+        paths.ensure().unwrap();
+        assert!(!storage_target_ready(&paths).unwrap());
+        crate::settings::AppSettings::default()
+            .save(&paths)
+            .unwrap();
+        assert!(storage_target_ready(&paths).unwrap());
+    }
+
+    #[test]
+    fn corrupt_settings_are_not_treated_as_a_new_install() {
+        let temporary = tempfile::tempdir().unwrap();
+        let paths = AppPaths::from_root(temporary.path());
+        paths.ensure().unwrap();
+        std::fs::write(paths.settings_file(), b"not json").unwrap();
+        assert!(storage_target_ready(&paths).is_err());
+        assert_eq!(std::fs::read(paths.settings_file()).unwrap(), b"not json");
     }
 
     #[test]

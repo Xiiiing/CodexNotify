@@ -18,6 +18,7 @@ pub struct ProjectRule {
 pub struct AppSettings {
     pub schema_version: u32,
     pub enabled: bool,
+    pub device_name: String,
     pub bark_server: String,
     pub group: String,
     pub level: String,
@@ -26,14 +27,28 @@ pub struct AppSettings {
     pub projects: Vec<ProjectRule>,
     pub message_mode: String,
     pub fixed_message: String,
-    pub notification_title: String,
     pub permission_notifications: bool,
+    pub user_input_notifications: bool,
     pub redact_sensitive: bool,
     pub quiet_hours_enabled: bool,
     pub quiet_start: String,
     pub quiet_end: String,
     pub quiet_action: String,
     pub bark_icon: String,
+    pub bark_markdown: bool,
+    pub bark_image: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bark_volume: Option<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bark_badge: Option<i64>,
+    pub bark_call: bool,
+    pub bark_auto_copy: bool,
+    pub bark_copy: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bark_archive: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bark_ttl: Option<u64>,
+    pub bark_action: String,
     pub click_url: String,
     pub request_timeout: u64,
     pub retry_limit: u32,
@@ -51,8 +66,9 @@ fn default_true() -> bool {
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
-            schema_version: 1,
+            schema_version: 2,
             enabled: true,
+            device_name: detected_device_name(),
             bark_server: "https://api.day.app".into(),
             group: "Codex".into(),
             level: "active".into(),
@@ -62,14 +78,24 @@ impl Default for AppSettings {
             message_mode: "summary200".into(),
             fixed_message: "Codex has finished a turn. Return to your computer to view the result."
                 .into(),
-            notification_title: "{project}".into(),
             permission_notifications: true,
+            user_input_notifications: true,
             redact_sensitive: true,
             quiet_hours_enabled: false,
             quiet_start: "22:00".into(),
             quiet_end: "08:00".into(),
             quiet_action: "silent".into(),
             bark_icon: String::new(),
+            bark_markdown: false,
+            bark_image: String::new(),
+            bark_volume: None,
+            bark_badge: None,
+            bark_call: false,
+            bark_auto_copy: false,
+            bark_copy: String::new(),
+            bark_archive: None,
+            bark_ttl: None,
+            bark_action: String::new(),
             click_url: String::new(),
             request_timeout: 8,
             retry_limit: 5,
@@ -89,7 +115,22 @@ impl AppSettings {
         if !path.exists() {
             return Ok(Self::default());
         }
-        let value: Self = serde_json::from_slice(&std::fs::read(path)?)?;
+        let mut value: Self = serde_json::from_slice(&std::fs::read(&path)?)?;
+        match value.schema_version {
+            1 => {
+                value.schema_version = 2;
+                if value.device_name.trim().is_empty() {
+                    value.device_name = detected_device_name();
+                }
+                value.save(paths)?;
+            }
+            2 => {}
+            _ => {
+                return Err(CoreError::InvalidConfig(
+                    "unsupported settings schema".into(),
+                ))
+            }
+        }
         value.validate()?;
         Ok(value)
     }
@@ -110,11 +151,20 @@ impl AppSettings {
     }
 
     pub fn validate(&self) -> CoreResult<()> {
-        if self.schema_version != 1 {
+        if self.schema_version != 2 {
             return Err(CoreError::InvalidConfig(
                 "unsupported settings schema".into(),
             ));
         }
+        if self.device_name.trim().is_empty() || self.device_name.chars().count() > 100 {
+            return Err(CoreError::InvalidConfig(
+                "device name must contain between 1 and 100 characters".into(),
+            ));
+        }
+        validate_url(&self.bark_server, true, "Bark server")?;
+        validate_url(&self.bark_icon, true, "Bark icon")?;
+        validate_url(&self.bark_image, true, "Bark image")?;
+        validate_url(&self.click_url, false, "Bark click URL")?;
         if !["all", "include", "exclude"].contains(&self.scope.as_str()) {
             return Err(CoreError::InvalidConfig("invalid project scope".into()));
         }
@@ -146,6 +196,71 @@ impl AppSettings {
                 "retry limit must be between 1 and 8".into(),
             ));
         }
+        if self.bark_volume.is_some_and(|value| value > 10) {
+            return Err(CoreError::InvalidConfig(
+                "Bark critical volume must be between 0 and 10".into(),
+            ));
+        }
+        if self.bark_ttl == Some(0) {
+            return Err(CoreError::InvalidConfig(
+                "Bark archive retention must be greater than zero".into(),
+            ));
+        }
+        if !matches!(self.bark_action.as_str(), "" | "alert") {
+            return Err(CoreError::InvalidConfig("invalid Bark action".into()));
+        }
         Ok(())
+    }
+}
+
+fn validate_url(value: &str, http_only: bool, label: &str) -> CoreResult<()> {
+    if value.trim().is_empty() {
+        return Ok(());
+    }
+    let parsed = url::Url::parse(value.trim())
+        .map_err(|_| CoreError::InvalidConfig(format!("{label} is invalid")))?;
+    if http_only && !matches!(parsed.scheme(), "http" | "https") {
+        return Err(CoreError::InvalidConfig(format!(
+            "{label} must use HTTP or HTTPS"
+        )));
+    }
+    Ok(())
+}
+
+pub fn detected_device_name() -> String {
+    hostname::get()
+        .ok()
+        .and_then(|name| name.into_string().ok())
+        .or_else(|| std::env::var("COMPUTERNAME").ok())
+        .or_else(|| std::env::var("HOSTNAME").ok())
+        .map(|name| name.trim().to_owned())
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| "This device".into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn migrates_v1_and_persists_detected_device_name() {
+        let temporary = tempfile::tempdir().unwrap();
+        let paths = AppPaths::from_root(temporary.path());
+        paths.ensure().unwrap();
+        std::fs::write(
+            paths.settings_file(),
+            br#"{"schemaVersion":1,"enabled":true,"barkServer":"https://api.day.app","notificationTitle":"{project}"}"#,
+        )
+        .unwrap();
+        let settings = AppSettings::load(&paths).unwrap();
+        assert_eq!(settings.schema_version, 2);
+        assert!(!settings.device_name.is_empty());
+        let saved: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(paths.settings_file()).unwrap()).unwrap();
+        assert_eq!(saved["schemaVersion"], 2);
+        assert!(saved["deviceName"]
+            .as_str()
+            .is_some_and(|name| !name.is_empty()));
+        assert!(saved.get("notificationTitle").is_none());
     }
 }

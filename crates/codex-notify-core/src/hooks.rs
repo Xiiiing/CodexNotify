@@ -4,6 +4,7 @@ use serde::Serialize;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 pub const NEW_MARKER: &str = "--codex-notify-hook";
@@ -80,6 +81,7 @@ fn stored_hook_states() -> Option<BTreeMap<String, StoredHookState>> {
 
 fn event_key(event: &str) -> Option<&'static str> {
     match event {
+        "PreToolUse" => Some("pre_tool_use"),
         "PermissionRequest" => Some("permission_request"),
         "Stop" => Some("stop"),
         _ => None,
@@ -239,13 +241,13 @@ pub fn status(binary: &Path) -> CoreResult<HookStatus> {
     let doc = load(&path)?;
     let mut events = vec![];
     let mut count = 0;
-    let mut current = false;
+    let mut current_count = 0_u32;
     let mut command = String::new();
     let stored_states = stored_hook_states();
     let mut trust_matches = 0_u32;
     let mut trust_mismatches = 0_u32;
     let mut trust_missing = 0_u32;
-    let mut enabled_count = 0_u32;
+    let mut enabled_events = HashSet::new();
     if let Some(hooks) = doc.get("hooks").and_then(Value::as_object) {
         for (event, groups) in hooks {
             let Some(groups) = groups.as_array() else {
@@ -271,13 +273,18 @@ pub fn status(binary: &Path) -> CoreResult<HookStatus> {
                         );
                         #[cfg(windows)]
                         {
-                            current |= configured
+                            if configured
                                 .to_lowercase()
-                                .contains(&binary.to_string_lossy().to_lowercase());
+                                .contains(&binary.to_string_lossy().to_lowercase())
+                            {
+                                current_count += 1;
+                            }
                         }
                         #[cfg(not(windows))]
                         {
-                            current |= configured.contains(binary.to_string_lossy().as_ref());
+                            if configured.contains(binary.to_string_lossy().as_ref()) {
+                                current_count += 1;
+                            }
                         }
                         command = configured;
                         if let (Some(event_key), Some(expected_hash)) =
@@ -290,7 +297,7 @@ pub fn status(binary: &Path) -> CoreResult<HookStatus> {
                             match stored_states.as_ref().and_then(|states| states.get(&key)) {
                                 Some(state) => {
                                     if state.enabled {
-                                        enabled_count += 1;
+                                        enabled_events.insert(event.clone());
                                     }
                                     match state.trusted_hash.as_deref() {
                                         Some(hash) if hash == expected_hash => trust_matches += 1,
@@ -300,7 +307,7 @@ pub fn status(binary: &Path) -> CoreResult<HookStatus> {
                                 }
                                 None => {
                                     // Codex defaults hooks to enabled when there is no state entry.
-                                    enabled_count += 1;
+                                    enabled_events.insert(event.clone());
                                     trust_missing += 1;
                                 }
                             }
@@ -312,7 +319,8 @@ pub fn status(binary: &Path) -> CoreResult<HookStatus> {
     }
     events.sort();
     let installed = events.iter().any(|value| value == "Stop")
-        && events.iter().any(|value| value == "PermissionRequest");
+        && events.iter().any(|value| value == "PermissionRequest")
+        && events.iter().any(|value| value == "PreToolUse");
     let trust_status = if !installed {
         "notInstalled"
     } else if stored_states.is_none() {
@@ -321,7 +329,7 @@ pub fn status(binary: &Path) -> CoreResult<HookStatus> {
         "modified"
     } else if trust_missing > 0 {
         "untrusted"
-    } else if trust_matches >= 2 {
+    } else if trust_matches >= 3 {
         "trusted"
     } else {
         "unknown"
@@ -332,12 +340,15 @@ pub fn status(binary: &Path) -> CoreResult<HookStatus> {
         installed,
         handler_count: count,
         installed_events: events,
-        path_current: current,
+        path_current: installed && current_count == count,
         configured_command: command,
         trusted: trust_status == "trusted",
         trust_status: trust_status.into(),
         review_required: matches!(trust_status, "untrusted" | "modified"),
-        enabled: installed && enabled_count >= 2,
+        enabled: installed
+            && ["PreToolUse", "PermissionRequest", "Stop"]
+                .iter()
+                .all(|event| enabled_events.contains(*event)),
     })
 }
 pub fn install(binary: &Path) -> CoreResult<(PathBuf, Option<PathBuf>)> {
@@ -359,6 +370,15 @@ pub fn install(binary: &Path) -> CoreResult<(PathBuf, Option<PathBuf>)> {
             .ok_or_else(|| CoreError::HookConfig(format!("hooks.{event} must be an array")))?;
         groups.push(json!({"hooks":[handler(binary)]}));
     }
+    hooks
+        .entry("PreToolUse")
+        .or_insert_with(|| json!([]))
+        .as_array_mut()
+        .ok_or_else(|| CoreError::HookConfig("hooks.PreToolUse must be an array".into()))?
+        .push(json!({
+            "matcher": "^(request_user_input|requestUserInput)$",
+            "hooks": [handler(binary)]
+        }));
     let copy = backup(&path)?;
     write(&path, &doc)?;
     Ok((path, copy))
@@ -410,12 +430,17 @@ mod tests {
         install(&bin).unwrap();
         install(&bin).unwrap();
         let s = status(&bin).unwrap();
-        assert_eq!(s.handler_count, 2);
+        assert_eq!(s.handler_count, 3);
         assert_eq!(s.trust_status, "untrusted");
         assert!(s.review_required);
 
         let document = load(&home.join("hooks.json")).unwrap();
         let permission = &document["hooks"]["PermissionRequest"][0]["hooks"][0];
+        let pre_tool = &document["hooks"]["PreToolUse"][0]["hooks"][0];
+        assert_eq!(
+            document["hooks"]["PreToolUse"][0]["matcher"],
+            "^(request_user_input|requestUserInput)$"
+        );
         let stop = &document["hooks"]["Stop"][1]["hooks"][0];
         assert!(permission["commandWindows"]
             .as_str()
@@ -423,6 +448,7 @@ mod tests {
                 && command.contains("& '")
                 && command.ends_with("\"")));
         let permission_hash = handler_hash("PermissionRequest", permission).unwrap();
+        let pre_tool_hash = handler_hash("PreToolUse", pre_tool).unwrap();
         let stop_hash = handler_hash("Stop", stop).unwrap();
         let hooks_file = home.join("hooks.json").display().to_string();
         let mut states = toml::map::Map::new();
@@ -431,6 +457,7 @@ mod tests {
                 format!("{hooks_file}:permission_request:0:0"),
                 permission_hash,
             ),
+            (format!("{hooks_file}:pre_tool_use:0:0"), pre_tool_hash),
             (format!("{hooks_file}:stop:1:0"), stop_hash),
         ] {
             let mut state = toml::map::Map::new();

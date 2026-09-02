@@ -12,6 +12,7 @@ chrono.workspace = true
 directories.workspace = true
 dunce.workspace = true
 keyring.workspace = true
+hostname.workspace = true
 rand.workspace = true
 regex.workspace = true
 reqwest.workspace = true

@@ -26,6 +26,9 @@ CREATE TABLE IF NOT EXISTS events (
   created_at INTEGER NOT NULL,
   sent_at INTEGER,
   error TEXT NOT NULL DEFAULT ''
+  ,bark_id TEXT NOT NULL DEFAULT ''
+  ,remote_updated_at INTEGER
+  ,remote_deleted_at INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_events_due ON events(status, next_attempt_at);
 CREATE INDEX IF NOT EXISTS idx_events_created ON events(created_at DESC);
@@ -85,6 +88,9 @@ pub struct EventRecord {
     pub created_at: i64,
     pub sent_at: Option<i64>,
     pub error: String,
+    pub bark_id: String,
+    pub remote_updated_at: Option<i64>,
+    pub remote_deleted_at: Option<i64>,
     #[serde(skip_serializing)]
     pub payload_json: String,
 }
@@ -119,6 +125,13 @@ impl EventStore {
         connection.busy_timeout(std::time::Duration::from_secs(10))?;
         connection.pragma_update(None, "journal_mode", "WAL")?;
         connection.execute_batch(SCHEMA)?;
+        ensure_column(&connection, "bark_id", "TEXT NOT NULL DEFAULT ''")?;
+        ensure_column(&connection, "remote_updated_at", "INTEGER")?;
+        ensure_column(&connection, "remote_deleted_at", "INTEGER")?;
+        connection.execute(
+            "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (2, unixepoch())",
+            [],
+        )?;
         Ok(connection)
     }
 
@@ -131,8 +144,8 @@ impl EventStore {
         };
         let connection = self.connect()?;
         let changed = connection.execute(
-            "INSERT OR IGNORE INTO events(event_key,event_type,session_id,turn_id,project,title,subtitle,body,payload_json,status,next_attempt_at,created_at,error) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
-            params![notification.event_key, notification.event_type, notification.session_id, notification.turn_id, notification.project, notification.title, notification.subtitle, notification.body, serde_json::to_string(notification)?, status.as_str(), now, now, notification.suppress_reason],
+            "INSERT OR IGNORE INTO events(event_key,event_type,session_id,turn_id,project,title,subtitle,body,payload_json,status,next_attempt_at,created_at,error,bark_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            params![notification.event_key, notification.event_type, notification.session_id, notification.turn_id, notification.project, notification.title, notification.subtitle, notification.body, serde_json::to_string(notification)?, status.as_str(), now, now, notification.suppress_reason, notification.bark_id],
         )?;
         let id = connection.query_row(
             "SELECT id FROM events WHERE event_key=?",
@@ -152,7 +165,7 @@ impl EventStore {
             [now - 300],
         )?;
         let records = {
-            let mut statement = transaction.prepare("SELECT id,event_key,event_type,project,title,subtitle,body,status,attempts,next_attempt_at,created_at,sent_at,error,payload_json FROM events WHERE status IN ('queued','retrying') AND next_attempt_at<=? ORDER BY created_at LIMIT ?")?;
+            let mut statement = transaction.prepare("SELECT id,event_key,event_type,project,title,subtitle,body,status,attempts,next_attempt_at,created_at,sent_at,error,payload_json,bark_id,remote_updated_at,remote_deleted_at FROM events WHERE status IN ('queued','retrying') AND next_attempt_at<=? ORDER BY created_at LIMIT ?")?;
             let values = statement
                 .query_map(params![now, limit], map_record)?
                 .collect::<Result<Vec<_>, _>>()?;
@@ -181,9 +194,10 @@ impl EventStore {
     }
 
     pub fn mark_sent(&self, id: i64) -> CoreResult<()> {
+        let now = Utc::now().timestamp();
         self.connect()?.execute(
-            "UPDATE events SET status='sent',attempts=attempts+1,sent_at=?,error='' WHERE id=?",
-            params![Utc::now().timestamp(), id],
+            "UPDATE events SET status='sent',attempts=attempts+1,sent_at=?,remote_updated_at=?,remote_deleted_at=NULL,error='' WHERE id=?",
+            params![now, now, id],
         )?;
         Ok(())
     }
@@ -220,9 +234,9 @@ impl EventStore {
     pub fn list(&self, limit: u32, status: Option<EventStatus>) -> CoreResult<Vec<EventRecord>> {
         let connection = self.connect()?;
         let sql = if status.is_some() {
-            "SELECT id,event_key,event_type,project,title,subtitle,body,status,attempts,next_attempt_at,created_at,sent_at,error,payload_json FROM events WHERE status=? ORDER BY created_at DESC LIMIT ?"
+            "SELECT id,event_key,event_type,project,title,subtitle,body,status,attempts,next_attempt_at,created_at,sent_at,error,payload_json,bark_id,remote_updated_at,remote_deleted_at FROM events WHERE status=? ORDER BY created_at DESC LIMIT ?"
         } else {
-            "SELECT id,event_key,event_type,project,title,subtitle,body,status,attempts,next_attempt_at,created_at,sent_at,error,payload_json FROM events ORDER BY created_at DESC LIMIT ?"
+            "SELECT id,event_key,event_type,project,title,subtitle,body,status,attempts,next_attempt_at,created_at,sent_at,error,payload_json,bark_id,remote_updated_at,remote_deleted_at FROM events ORDER BY created_at DESC LIMIT ?"
         };
         let mut statement = connection.prepare(sql)?;
         let rows = if let Some(status) = status {
@@ -240,7 +254,7 @@ impl EventStore {
     pub fn get(&self, id: i64) -> CoreResult<Option<EventRecord>> {
         self.connect()?
             .query_row(
-                "SELECT id,event_key,event_type,project,title,subtitle,body,status,attempts,next_attempt_at,created_at,sent_at,error,payload_json FROM events WHERE id=?",
+                "SELECT id,event_key,event_type,project,title,subtitle,body,status,attempts,next_attempt_at,created_at,sent_at,error,payload_json,bark_id,remote_updated_at,remote_deleted_at FROM events WHERE id=?",
                 [id],
                 map_record,
             )
@@ -262,6 +276,30 @@ impl EventStore {
             "DELETE FROM events WHERE status IN ('sent','failed','suppressed')",
             [],
         )?)
+    }
+    pub fn mark_remote_updated(&self, id: i64, body: &str, payload_json: &str) -> CoreResult<()> {
+        self.connect()?.execute(
+            "UPDATE events SET body=?,payload_json=?,remote_updated_at=?,remote_deleted_at=NULL,error='' WHERE id=?",
+            params![body, payload_json, Utc::now().timestamp(), id],
+        )?;
+        Ok(())
+    }
+    pub fn mark_remote_deleted(&self, id: i64) -> CoreResult<()> {
+        self.connect()?.execute(
+            "UPDATE events SET remote_deleted_at=?,error='' WHERE id=?",
+            params![Utc::now().timestamp(), id],
+        )?;
+        Ok(())
+    }
+    pub fn remote_notification_ids(&self) -> CoreResult<Vec<(i64, String)>> {
+        let connection = self.connect()?;
+        let mut statement = connection.prepare(
+            "SELECT id,bark_id FROM events WHERE status='sent' AND bark_id<>'' AND remote_deleted_at IS NULL ORDER BY created_at DESC",
+        )?;
+        let rows = statement
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
     }
     pub fn counts(&self) -> CoreResult<EventCounts> {
         let c = self.connect()?;
@@ -296,7 +334,24 @@ fn map_record(row: &rusqlite::Row<'_>) -> rusqlite::Result<EventRecord> {
         sent_at: row.get(11)?,
         error: row.get(12)?,
         payload_json: row.get(13)?,
+        bark_id: row.get(14)?,
+        remote_updated_at: row.get(15)?,
+        remote_deleted_at: row.get(16)?,
     })
+}
+
+fn ensure_column(connection: &Connection, name: &str, declaration: &str) -> CoreResult<()> {
+    let mut statement = connection.prepare("PRAGMA table_info(events)")?;
+    let columns = statement
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<Result<Vec<_>, _>>()?;
+    if !columns.iter().any(|column| column == name) {
+        connection.execute(
+            &format!("ALTER TABLE events ADD COLUMN {name} {declaration}"),
+            [],
+        )?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -319,5 +374,76 @@ mod tests {
         store.mark_failed(claimed[0].id, "offline", 2).unwrap();
         assert_eq!(store.counts().unwrap().retrying, 1);
         assert!(matches!(store.next_due_delay().unwrap(), Some(1..=10)));
+    }
+
+    #[test]
+    fn migrates_existing_event_database_without_losing_rows() {
+        let temp = tempfile::tempdir().unwrap();
+        let paths = AppPaths::from_root(temp.path());
+        paths.ensure().unwrap();
+        let connection = Connection::open(paths.events_db()).unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    event_key TEXT NOT NULL UNIQUE,
+                    event_type TEXT NOT NULL,
+                    session_id TEXT NOT NULL DEFAULT '',
+                    turn_id TEXT NOT NULL DEFAULT '',
+                    project TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    subtitle TEXT NOT NULL DEFAULT '',
+                    body TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    attempts INTEGER NOT NULL DEFAULT 0,
+                    next_attempt_at INTEGER NOT NULL,
+                    created_at INTEGER NOT NULL,
+                    sent_at INTEGER,
+                    error TEXT NOT NULL DEFAULT ''
+                );
+                INSERT INTO events(event_key,event_type,project,title,body,payload_json,status,next_attempt_at,created_at)
+                VALUES('legacy','Stop','Demo','Demo','Done','{}','sent',0,1);",
+            )
+            .unwrap();
+        drop(connection);
+
+        let store = EventStore::new(&paths).unwrap();
+        let rows = store.list(10, None).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].event_key, "legacy");
+        assert!(rows[0].bark_id.is_empty());
+        assert!(rows[0].remote_updated_at.is_none());
+    }
+
+    #[test]
+    fn tracks_remote_updates_and_deletes_without_removing_history() {
+        let temp = tempfile::tempdir().unwrap();
+        let paths = AppPaths::from_root(temp.path());
+        let store = EventStore::new(&paths).unwrap();
+        let event: HookEvent = serde_json::from_value(serde_json::json!({
+            "hook_event_name":"Stop",
+            "session_id":"s",
+            "turn_id":"t",
+            "cwd":"/tmp/demo",
+            "last_assistant_message":"Done"
+        }))
+        .unwrap();
+        let notification = build_notification(&event, &AppSettings::default());
+        let (id, _) = store.enqueue(&notification).unwrap();
+        store.mark_sent(id).unwrap();
+        assert_eq!(store.remote_notification_ids().unwrap().len(), 1);
+
+        let mut updated = notification.clone();
+        updated.body = "Updated".into();
+        store
+            .mark_remote_updated(id, &updated.body, &serde_json::to_string(&updated).unwrap())
+            .unwrap();
+        assert_eq!(store.get(id).unwrap().unwrap().body, "Updated");
+
+        store.mark_remote_deleted(id).unwrap();
+        assert!(store.remote_notification_ids().unwrap().is_empty());
+        let record = store.get(id).unwrap().unwrap();
+        assert!(record.remote_deleted_at.is_some());
     }
 }
