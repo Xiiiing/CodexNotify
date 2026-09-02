@@ -182,14 +182,18 @@ jobs:
         with:
           name: CodexNotify ${{ github.ref_name }}
           body: |
-            ## Downloads
+            ## 下载 / Downloads
 
-            - **macOS (Intel + Apple Silicon):** `CodexNotify-macOS-Universal.dmg`
-            - **Windows 10/11 x64:** `CodexNotify-Windows-x64.exe`
-            - **Linux desktop x86_64:** `CodexNotify-Linux-Desktop-x86_64.AppImage`
-            - **Linux headless x86_64:** `codex-notify-Linux-CLI-x86_64`
+            - **Windows 10/11 x64 免安装版：** `CodexNotify-Windows-x64.exe`
+            - **macOS Intel + Apple Silicon：** `CodexNotify-macOS-Universal.dmg`
+            - **Linux 桌面 x86_64：** `CodexNotify-Linux-Desktop-x86_64.AppImage`
+            - **Linux 无桌面 x86_64：** `codex-notify-Linux-CLI-x86_64`
 
-            Windows and macOS builds are currently not backed by commercial signing certificates, so the operating system may request a one-time security review. Linux downloads may need `chmod +x <filename>` before first launch.
+            使用说明：[中文文档](https://github.com/${{ github.repository }}/blob/${{ github.ref_name }}/README.md) · [English documentation](https://github.com/${{ github.repository }}/blob/${{ github.ref_name }}/README_EN.md)
+
+            Windows 与 macOS 版本目前没有商业代码签名，首次启动时系统可能要求额外确认。Linux 文件下载后可能需要先执行 `chmod +x <文件名>`。
+
+            Windows and macOS builds are currently unsigned with commercial certificates, so the operating system may request a one-time confirmation. Linux downloads may require `chmod +x <filename>` before first launch.
           generate_release_notes: true
           files: release-assets/*
           fail_on_unmatched_files: true
