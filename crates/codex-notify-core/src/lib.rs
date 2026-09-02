@@ -13,7 +13,7 @@ pub use dispatcher::{dispatch_due, DispatchResult};
 pub use error::{CoreError, CoreResult};
 pub use hook_runtime::process_hook_input;
 pub use notification::{build_notification, should_notify, HookEvent, Notification};
-pub use paths::AppPaths;
+pub use paths::{AppPaths, StorageInfo, StorageMode};
 pub use settings::{AppSettings, ProjectRule};
 pub use store::{EventCounts, EventRecord, EventStatus, EventStore};
 

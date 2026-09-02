@@ -1,8 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { AppSettings, AppState, Diagnostics, EventRecord, EventStatus, HookStatus, SecretStatus } from "./types";
+import type { AppSettings, AppState, Diagnostics, EventRecord, EventStatus, HookStatus, SecretStatus, StorageMode } from "./types";
 
 export const api = {
   state: () => invoke<AppState>("get_app_state"),
+  selectStorage: (mode:StorageMode,customPath?:string) => invoke<void>("select_storage",{mode,customPath:customPath||null}),
+  migrateStorage: (mode:StorageMode,customPath?:string) => invoke<void>("migrate_storage",{mode,customPath:customPath||null}),
   save: (settings:AppSettings) => invoke<void>("save_settings",{settings}),
   secretStatus: () => invoke<SecretStatus>("get_secret_status"),
   setSecret: (kind:string,value:string) => invoke<void>("set_secret",{kind,value}),

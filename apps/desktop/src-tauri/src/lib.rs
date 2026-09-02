@@ -3,10 +3,12 @@ use codex_notify_core::hooks::{self, HookStatus};
 use codex_notify_core::security::{self, BARK_KEY_ACCOUNT, ENCRYPTION_KEY_ACCOUNT};
 use codex_notify_core::{
     bark, dispatch_due, AppPaths, AppSettings, EventCounts, EventRecord, EventStatus, EventStore,
-    Notification,
+    Notification, StorageInfo, StorageMode,
 };
 use serde::Serialize;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use tauri::menu::{CheckMenuItem, Menu, MenuItem};
 use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Manager, State, WindowEvent};
@@ -17,6 +19,9 @@ struct Backend {
     paths: AppPaths,
     store: EventStore,
     hook_binary: PathBuf,
+    storage: StorageInfo,
+    _runtime_temp: Option<Arc<tempfile::TempDir>>,
+    migrating: Arc<AtomicBool>,
 }
 
 #[derive(Serialize)]
@@ -29,6 +34,7 @@ struct SecretStatus {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct AppStateDto {
+    storage: StorageInfo,
     settings: AppSettings,
     counts: EventCounts,
     secrets: SecretStatus,
@@ -39,6 +45,7 @@ struct AppStateDto {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct Diagnostics {
+    storage: StorageInfo,
     settings_readable: bool,
     database_ready: bool,
     credential_store_available: bool,
@@ -94,6 +101,7 @@ fn get_app_state(state: State<'_, Backend>) -> CommandResult<AppStateDto> {
     api((|| {
         let settings = AppSettings::load(&state.paths)?;
         Ok(AppStateDto {
+            storage: state.storage.clone(),
             counts: state.store.counts()?,
             secrets: secret_status_lossy(),
             hook: hook_status_lossy(&state.hook_binary),
@@ -101,6 +109,54 @@ fn get_app_state(state: State<'_, Backend>) -> CommandResult<AppStateDto> {
             settings,
         })
     })())
+}
+
+#[tauri::command]
+fn select_storage(
+    mode: StorageMode,
+    custom_path: Option<String>,
+    app: AppHandle,
+) -> CommandResult<()> {
+    api(AppPaths::configure_storage(
+        mode,
+        custom_path.as_deref().map(std::path::Path::new),
+    ))?;
+    app.restart();
+}
+
+#[tauri::command]
+fn migrate_storage(
+    mode: StorageMode,
+    custom_path: Option<String>,
+    app: AppHandle,
+    state: State<'_, Backend>,
+) -> CommandResult<()> {
+    if state.migrating.swap(true, Ordering::SeqCst) {
+        return Err(ApiError {
+            code: "storageMigrationBusy",
+            message: "a storage migration is already running".into(),
+        });
+    }
+    let hook_was_installed = hooks::status(&state.hook_binary)
+        .map(|status| status.installed)
+        .unwrap_or(false);
+    match AppPaths::migrate_storage(mode, custom_path.as_deref().map(std::path::Path::new)) {
+        Ok(_) => {
+            if hook_was_installed {
+                if let Ok((new_paths, _)) = AppPaths::resolve_storage() {
+                    let new_hook_binary = locate_hook_binary(&new_paths);
+                    if let Err(error) = hooks::install(&new_hook_binary) {
+                        tracing::warn!(%error, "storage moved but Hook path repair failed");
+                    }
+                }
+            }
+            app.restart()
+        }
+        Err(error) => {
+            state.migrating.store(false, Ordering::SeqCst);
+            Err(error.into())
+        }
+    }
 }
 #[tauri::command]
 fn save_settings(settings: AppSettings, state: State<'_, Backend>) -> CommandResult<()> {
@@ -219,6 +275,7 @@ fn run_diagnostics(state: State<'_, Backend>) -> CommandResult<Diagnostics> {
         let credential_store_available = secret_status().is_ok();
         let hook = hooks::status(&state.hook_binary)?;
         Ok(Diagnostics {
+            storage: state.storage.clone(),
             settings_readable,
             database_ready,
             credential_store_available,
@@ -324,13 +381,34 @@ fn create_tray(app: &AppHandle) -> tauri::Result<()> {
 }
 
 pub fn run() {
-    let paths = AppPaths::discover().expect("application paths");
+    let (selected_paths, storage) = AppPaths::resolve_storage().expect("application paths");
+    // The chooser must be the first persistent write for a new installation. Until the user
+    // selects a location, run the backend from a process-scoped temporary directory.
+    let runtime_temp = (!storage.configured)
+        .then(|| tempfile::tempdir().expect("temporary setup directory"))
+        .map(Arc::new);
+    let paths = runtime_temp
+        .as_ref()
+        .map(|temporary| AppPaths::from_root(temporary.path()))
+        .unwrap_or(selected_paths);
     let _ = codex_notify_core::init_logging(&paths, "desktop");
     let store = EventStore::new(&paths).expect("event database");
+    let hook_binary = if storage.configured {
+        locate_hook_binary(&paths)
+    } else {
+        paths.data_dir.join(if cfg!(windows) {
+            "bin/codex-notify-hook.exe"
+        } else {
+            "bin/codex-notify-hook"
+        })
+    };
     let backend = Backend {
         paths: paths.clone(),
         store: store.clone(),
-        hook_binary: locate_hook_binary(&paths),
+        hook_binary,
+        storage,
+        _runtime_temp: runtime_temp,
+        migrating: Arc::new(AtomicBool::new(false)),
     };
     let background = backend.clone();
     tauri::Builder::default()
@@ -341,6 +419,7 @@ pub fn run() {
             }
         }))
         .plugin(tauri_plugin_autostart::Builder::new().build())
+        .plugin(tauri_plugin_dialog::init())
         .manage(backend)
         .setup(move |app| {
             create_tray(app.handle())?;
@@ -355,6 +434,9 @@ pub fn run() {
                     .unwrap_or(60);
                 if delay > 0 {
                     std::thread::sleep(std::time::Duration::from_secs(delay));
+                }
+                if background.migrating.load(Ordering::SeqCst) {
+                    continue;
                 }
                 if !matches!(background.store.next_due_delay(), Ok(Some(0))) {
                     continue;
@@ -386,6 +468,8 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             get_app_state,
+            select_storage,
+            migrate_storage,
             save_settings,
             get_secret_status,
             set_secret,

@@ -33,18 +33,29 @@ The workspace contains:
 
 Secrets are stored under service `com.xiiiing.codex-notify` in Windows Credential Manager, macOS Keychain, or Linux Secret Service. Headless Linux can inject `CODEX_NOTIFY_BARK_KEY` and `CODEX_NOTIFY_ENCRYPTION_KEY`; environment values take priority and are never copied into settings, SQLite or logs. Linux desktop sessions should provide a Secret Service implementation such as GNOME Keyring or KWallet.
 
+## Release downloads
+
+Each version is published on one GitHub Release page with four ready-to-run products:
+
+- `CodexNotify-macOS-Universal.dmg`: macOS desktop for Intel and Apple Silicon.
+- `CodexNotify-Windows-x64.exe`: portable Windows 10/11 desktop executable.
+- `CodexNotify-Linux-Desktop-x86_64.AppImage`: graphical Linux desktop edition.
+- `codex-notify-Linux-CLI-x86_64`: static headless Linux CLI, Hook and daemon.
+
+The macOS and Windows products require commercial signing credentials to avoid all operating-system security prompts. Until those repository secrets are configured, releases use macOS ad-hoc signing and an unsigned Windows executable. Linux downloads may require `chmod +x <filename>` once after downloading.
+
 ## Linux editions
 
 Only two Linux downloads are published:
 
-- `CodexNotify-Linux-x86_64.AppImage`: graphical Tauri desktop edition with the Hook embedded.
-- `codex-notify-linux-x86_64`: Headless single executable with no GTK, WebKitGTK, GIO or display-server dependency. The same file acts as both management CLI and Codex Hook.
+- `CodexNotify-Linux-Desktop-x86_64.AppImage`: graphical Tauri desktop edition with the Hook embedded.
+- `codex-notify-Linux-CLI-x86_64`: statically linked Headless single executable with no GTK, WebKitGTK, GIO or display-server dependency. The same file acts as both management CLI and Codex Hook.
 
 Headless quick start:
 
 ```bash
-chmod +x codex-notify-linux-x86_64
-mv codex-notify-linux-x86_64 ~/.local/bin/codex-notify
+chmod +x codex-notify-Linux-CLI-x86_64
+mv codex-notify-Linux-CLI-x86_64 ~/.local/bin/codex-notify
 codex-notify init
 read -rsp "Bark device key: " CODEX_NOTIFY_BARK_KEY && export CODEX_NOTIFY_BARK_KEY
 codex-notify test
@@ -101,7 +112,13 @@ cargo build --release -p codex-notify-desktop -p codex-notify-hook
 
 ## Local data and Hook safety
 
-CodexNotify uses the standard per-user config, data and log directories for each OS. For isolated development or tests, set `CODEX_NOTIFY_DATA_DIR` to redirect all non-secret files. Set `CODEX_HOME` to test Hook configuration without modifying the real `~/.codex/hooks.json`.
+On a fresh desktop installation, CodexNotify asks where to store all non-secret files before creating its settings or database. The choices are the operating system's standard per-user application directories (recommended), a portable `CodexNotifyData/config|data|logs` directory beside the executable, or a custom folder. Existing installations that already have `settings.json` continue using the standard location without a migration prompt.
+
+For portable and custom locations, a small `storage.json` locator remains in the standard configuration directory so the standalone Hook can resolve the same data directory while the desktop app is closed. It stores only the selected mode and absolute path. Bark and AES keys remain exclusively in Windows Credential Manager, macOS Keychain or Linux Secret Service and are never written into the selected folder or locator.
+
+The System page can move an existing installation to another location. Migration requires an empty destination, uses SQLite's online backup API, verifies the copied settings and database, switches the Hook locator only after validation, repairs an installed Hook to its new absolute binary path, removes the previous `config`, `data` and `logs` contents, and restarts the app. A changed Hook command may require Codex trust review. When moving away from the system-default location, its config directory retains only the small locator required by the standalone Hook. Overlapping paths and environment-controlled storage are rejected. Credential-store entries are not moved or deleted.
+
+For isolated development, headless deployments or tests, set `CODEX_NOTIFY_DATA_DIR` to redirect all non-secret files; this environment override takes precedence over the desktop selection. Set `CODEX_HOME` to test Hook configuration without modifying the real `~/.codex/hooks.json`.
 
 Hook installation is always user initiated. It backs up `hooks.json`, preserves third-party handlers, removes both the legacy `--codex-bark-notifier` marker and the current `--codex-notify-hook` marker, then installs `Stop` and `PermissionRequest` as asynchronous commands. Permission requests are notification-only and never approve or deny an operation.
 

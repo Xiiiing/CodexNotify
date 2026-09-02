@@ -11,7 +11,9 @@ export interface EventCounts { queued:number; sending:number; retrying:number; s
 export type HookTrustStatus = "notInstalled" | "trusted" | "untrusted" | "modified" | "unknown";
 export interface HookStatus { hooksPath:string; exists:boolean; installed:boolean; handlerCount:number; installedEvents:string[]; pathCurrent:boolean; configuredCommand:string; trusted:boolean; trustStatus:HookTrustStatus; reviewRequired:boolean; enabled:boolean }
 export interface SecretStatus { barkKeyConfigured:boolean; encryptionKeyConfigured:boolean }
-export interface AppState { settings:AppSettings; counts:EventCounts; secrets:SecretStatus; hook:HookStatus; health:Record<string,unknown> }
+export type StorageMode = "default" | "portable" | "custom" | "environment";
+export interface StorageInfo { configured:boolean; mode:StorageMode; root:string; configDir:string; dataDir:string; logDir:string; locatorFile:string }
+export interface AppState { storage:StorageInfo; settings:AppSettings; counts:EventCounts; secrets:SecretStatus; hook:HookStatus; health:Record<string,unknown> }
 export interface EventRecord { id:number; eventKey:string; eventType:string; project:string; title:string; subtitle:string; body:string; status:EventStatus; attempts:number; nextAttemptAt:number; createdAt:number; sentAt?:number; error:string }
-export interface Diagnostics { settingsReadable:boolean; databaseReady:boolean; credentialStoreAvailable:boolean; hook:HookStatus; hookBinary:string; hookBinaryExists:boolean; health:Record<string,unknown> }
+export interface Diagnostics { storage:StorageInfo; settingsReadable:boolean; databaseReady:boolean; credentialStoreAvailable:boolean; hook:HookStatus; hookBinary:string; hookBinaryExists:boolean; health:Record<string,unknown> }
 export interface ApiError { code:string; message:string }

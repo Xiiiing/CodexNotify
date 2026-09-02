@@ -97,7 +97,7 @@ pub fn send(
 ) -> CoreResult<Value> {
     let client = reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(settings.request_timeout))
-        .user_agent("CodexNotify/1.0")
+        .user_agent(concat!("CodexNotify/", env!("CARGO_PKG_VERSION")))
         .build()
         .map_err(|e| CoreError::Network(e.to_string()))?;
     let url = endpoint(&settings.bark_server, bark_key)?;

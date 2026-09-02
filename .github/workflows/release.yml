@@ -1,0 +1,190 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    name: Windows x64 portable
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: . -> target
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+      - name: Install frontend dependencies
+        working-directory: apps/desktop
+        run: npm ci
+      - name: Build and stage embedded Hook
+        shell: pwsh
+        run: |
+          cargo build --release -p codex-notify-hook
+          $triple = rustc --print host-tuple
+          New-Item -ItemType Directory -Force apps/desktop/src-tauri/binaries | Out-Null
+          Copy-Item target/release/codex-notify-hook.exe "apps/desktop/src-tauri/binaries/codex-notify-hook-$triple.exe"
+      - name: Build portable executable
+        working-directory: apps/desktop
+        run: npx tauri build --no-bundle
+      - name: Collect release file
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force release-assets | Out-Null
+          Copy-Item target/release/codex-notify-desktop.exe release-assets/CodexNotify-Windows-x64.exe
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-windows
+          path: release-assets/CodexNotify-Windows-x64.exe
+          if-no-files-found: error
+
+  macos:
+    name: macOS universal DMG
+    runs-on: macos-14
+    env:
+      # Ad-hoc signing keeps Apple Silicon bundles internally consistent. Add Apple Developer
+      # certificate/notarization secrets later to remove the Gatekeeper review prompt.
+      APPLE_SIGNING_IDENTITY: "-"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: . -> target
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+      - name: Install frontend dependencies
+        working-directory: apps/desktop
+        run: npm ci
+      - name: Build architecture-specific embedded Hooks
+        run: |
+          cargo build --release -p codex-notify-hook --target aarch64-apple-darwin
+          cargo build --release -p codex-notify-hook --target x86_64-apple-darwin
+          mkdir -p apps/desktop/src-tauri/binaries
+          cp target/aarch64-apple-darwin/release/codex-notify-hook apps/desktop/src-tauri/binaries/codex-notify-hook-aarch64-apple-darwin
+          cp target/x86_64-apple-darwin/release/codex-notify-hook apps/desktop/src-tauri/binaries/codex-notify-hook-x86_64-apple-darwin
+      - name: Build universal DMG
+        working-directory: apps/desktop
+        run: npx tauri build --target universal-apple-darwin --bundles dmg
+      - name: Collect release file
+        run: |
+          mkdir -p release-assets
+          cp target/universal-apple-darwin/release/bundle/dmg/*.dmg release-assets/CodexNotify-macOS-Universal.dmg
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-macos
+          path: release-assets/CodexNotify-macOS-Universal.dmg
+          if-no-files-found: error
+
+  linux-desktop:
+    name: Linux desktop AppImage
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: . -> target
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+      - name: Install Linux desktop dependencies
+        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf pkg-config
+      - name: Install frontend dependencies
+        working-directory: apps/desktop
+        run: npm ci
+      - name: Build and stage embedded Hook
+        run: |
+          cargo build --release -p codex-notify-hook
+          mkdir -p apps/desktop/src-tauri/binaries
+          cp target/release/codex-notify-hook apps/desktop/src-tauri/binaries/codex-notify-hook-x86_64-unknown-linux-gnu
+      - name: Build AppImage
+        working-directory: apps/desktop
+        run: npx tauri build --bundles appimage
+      - name: Collect release file
+        run: |
+          mkdir -p release-assets
+          cp target/release/bundle/appimage/*.AppImage release-assets/CodexNotify-Linux-Desktop-x86_64.AppImage
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-linux-desktop
+          path: release-assets/CodexNotify-Linux-Desktop-x86_64.AppImage
+          if-no-files-found: error
+
+  linux-cli:
+    name: Linux CLI static x64
+    runs-on: ubuntu-22.04
+    env:
+      CC_x86_64_unknown_linux_musl: musl-gcc
+      CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: . -> target
+      - name: Install musl toolchain
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - name: Build static Headless CLI
+        run: cargo build --release -p codex-notify-cli --target x86_64-unknown-linux-musl
+      - name: Verify static binary and collect release file
+        run: |
+          file target/x86_64-unknown-linux-musl/release/codex-notify | grep -q 'statically linked'
+          target/x86_64-unknown-linux-musl/release/codex-notify --version
+          mkdir -p release-assets
+          cp target/x86_64-unknown-linux-musl/release/codex-notify release-assets/codex-notify-Linux-CLI-x86_64
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-linux-cli
+          path: release-assets/codex-notify-Linux-CLI-x86_64
+          if-no-files-found: error
+
+  publish:
+    name: Publish one GitHub Release
+    needs: [windows, macos, linux-desktop, linux-cli]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: release-assets
+          merge-multiple: true
+      - name: Verify exactly four products
+        run: |
+          test "$(find release-assets -maxdepth 1 -type f | wc -l)" -eq 4
+          test -f release-assets/CodexNotify-macOS-Universal.dmg
+          test -f release-assets/CodexNotify-Windows-x64.exe
+          test -f release-assets/CodexNotify-Linux-Desktop-x86_64.AppImage
+          test -f release-assets/codex-notify-Linux-CLI-x86_64
+      - uses: softprops/action-gh-release@v2
+        with:
+          name: CodexNotify ${{ github.ref_name }}
+          body: |
+            ## Downloads
+
+            - **macOS (Intel + Apple Silicon):** `CodexNotify-macOS-Universal.dmg`
+            - **Windows 10/11 x64:** `CodexNotify-Windows-x64.exe`
+            - **Linux desktop x86_64:** `CodexNotify-Linux-Desktop-x86_64.AppImage`
+            - **Linux headless x86_64:** `codex-notify-Linux-CLI-x86_64`
+
+            Windows and macOS builds are currently not backed by commercial signing certificates, so the operating system may request a one-time security review. Linux downloads may need `chmod +x <filename>` before first launch.
+          generate_release_notes: true
+          files: release-assets/*
+          fail_on_unmatched_files: true
