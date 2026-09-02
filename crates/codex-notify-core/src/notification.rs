@@ -1,7 +1,7 @@
 use crate::settings::AppSettings;
 use chrono::{Local, NaiveTime};
 use regex::Regex;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
@@ -18,7 +18,11 @@ pub struct HookEvent {
     pub tool_use_id: String,
     #[serde(default)]
     pub cwd: String,
-    #[serde(default, alias = "lastAssistantMessage")]
+    #[serde(
+        default,
+        alias = "lastAssistantMessage",
+        deserialize_with = "deserialize_nullable_string"
+    )]
     pub last_assistant_message: String,
     #[serde(default, alias = "toolName")]
     pub tool_name: String,
@@ -26,6 +30,13 @@ pub struct HookEvent {
     pub tool_input: Value,
     #[serde(default)]
     pub diagnostic: bool,
+}
+
+fn deserialize_nullable_string<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Ok(Option::<String>::deserialize(deserializer)?.unwrap_or_default())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -373,6 +384,23 @@ mod tests {
             build_notification(&event, &AppSettings::default()).subtitle,
             "Waiting for input"
         );
+    }
+
+    #[test]
+    fn accepts_nullable_official_stop_message() {
+        let event: HookEvent = serde_json::from_value(serde_json::json!({
+            "hook_event_name": "Stop",
+            "session_id": "session",
+            "turn_id": "turn",
+            "cwd": "C:\\work",
+            "stop_hook_active": false,
+            "last_assistant_message": null
+        }))
+        .unwrap();
+        assert!(event.last_assistant_message.is_empty());
+        let notification = build_notification(&event, &AppSettings::default());
+        assert_eq!(notification.subtitle, "Turn completed");
+        assert!(!notification.body.is_empty());
     }
     #[test]
     fn redacts_secrets() {
