@@ -10,7 +10,7 @@
     "frontendDist": "../dist"
   },
   "app": {
-    "windows": [{ "label": "main", "title": "CodexNotify", "width": 1180, "height": 760, "minWidth": 920, "minHeight": 640 }],
+    "windows": [{ "label": "main", "title": "CodexNotify", "width": 1240, "height": 800, "minWidth": 980, "minHeight": 680 }],
     "security": { "csp": null }
   },
   "bundle": {

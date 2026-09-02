@@ -15,8 +15,7 @@ type Aes256CbcEnc = cbc::Encryptor<Aes256>;
 
 fn endpoint(server: &str, key: &str) -> CoreResult<Url> {
     if key.starts_with("http://") || key.starts_with("https://") {
-        return Url::parse(key)
-            .map_err(|e| CoreError::InvalidConfig(format!("invalid Bark URL: {e}")));
+        return Url::parse(key).map_err(|_| CoreError::InvalidBarkServer);
     }
     if key.trim().is_empty() {
         return Err(CoreError::InvalidConfig(
@@ -28,14 +27,12 @@ fn endpoint(server: &str, key: &str) -> CoreResult<Url> {
     } else {
         server
     })
-    .map_err(|e| CoreError::InvalidConfig(format!("invalid Bark server: {e}")))?;
+    .map_err(|_| CoreError::InvalidBarkServer)?;
     if !matches!(url.scheme(), "http" | "https") {
-        return Err(CoreError::InvalidConfig(
-            "Bark server must use HTTP or HTTPS".into(),
-        ));
+        return Err(CoreError::InvalidBarkServer);
     }
     url.path_segments_mut()
-        .map_err(|_| CoreError::InvalidConfig("Bark server cannot be a base URL".into()))?
+        .map_err(|_| CoreError::InvalidBarkServer)?
         .pop_if_empty()
         .push(key);
     Ok(url)
@@ -60,9 +57,7 @@ fn payload(notification: &Notification) -> Value {
 fn encrypt(value: &Value, key: &str, algorithm: &str) -> CoreResult<HashMap<&'static str, String>> {
     let expected = if algorithm == "AES-128-CBC" { 16 } else { 32 };
     if key.len() != expected {
-        return Err(CoreError::InvalidConfig(format!(
-            "{algorithm} key must be exactly {expected} UTF-8 bytes"
-        )));
+        return Err(CoreError::InvalidEncryptionKey);
     }
     let iv: String = rand::thread_rng()
         .sample_iter(&Alphanumeric)
@@ -89,17 +84,114 @@ fn encrypt(value: &Value, key: &str, algorithm: &str) -> CoreResult<HashMap<&'st
     ]))
 }
 
+fn invalid_device_key(status: reqwest::StatusCode, body: &str) -> bool {
+    if status != reqwest::StatusCode::BAD_REQUEST {
+        return false;
+    }
+    let message = serde_json::from_str::<Value>(body)
+        .ok()
+        .and_then(|value| {
+            value
+                .get("message")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        })
+        .unwrap_or_else(|| body.to_owned())
+        .to_ascii_lowercase();
+    [
+        "device key",
+        "device token",
+        "get device token",
+        "invalid key",
+    ]
+    .iter()
+    .any(|needle| message.contains(needle))
+}
+
+fn request_error(error: reqwest::Error) -> CoreError {
+    if error.is_timeout() {
+        CoreError::BarkTimeout
+    } else {
+        CoreError::BarkUnreachable
+    }
+}
+
+fn parse_response(status: reqwest::StatusCode, text: &str) -> CoreResult<Value> {
+    if status.is_server_error() {
+        return Err(CoreError::BarkServer);
+    }
+    if !status.is_success() {
+        return Err(if invalid_device_key(status, text) {
+            CoreError::BarkInvalidKey
+        } else {
+            CoreError::BarkRejected
+        });
+    }
+    if text.trim().is_empty() {
+        return Ok(json!({}));
+    }
+    let result: Value = serde_json::from_str(text).map_err(|_| CoreError::BarkRejected)?;
+    if let Some(code) = result.get("code").and_then(Value::as_i64) {
+        if code != 200 {
+            let synthetic_status = reqwest::StatusCode::from_u16(code as u16)
+                .unwrap_or(reqwest::StatusCode::BAD_REQUEST);
+            return Err(if invalid_device_key(synthetic_status, text) {
+                CoreError::BarkInvalidKey
+            } else {
+                CoreError::BarkRejected
+            });
+        }
+    }
+    Ok(result)
+}
+
 pub fn send(
     notification: &Notification,
     settings: &AppSettings,
     bark_key: &str,
     encryption_key: Option<&str>,
 ) -> CoreResult<Value> {
-    let client = reqwest::blocking::Client::builder()
-        .timeout(Duration::from_secs(settings.request_timeout))
-        .user_agent(concat!("CodexNotify/", env!("CARGO_PKG_VERSION")))
-        .build()
-        .map_err(|e| CoreError::Network(e.to_string()))?;
+    send_with_timeouts(
+        notification,
+        settings,
+        bark_key,
+        encryption_key,
+        Duration::from_secs(settings.request_timeout),
+        None,
+    )
+}
+
+pub fn send_test(
+    notification: &Notification,
+    settings: &AppSettings,
+    bark_key: &str,
+    encryption_key: Option<&str>,
+) -> CoreResult<Value> {
+    send_with_timeouts(
+        notification,
+        settings,
+        bark_key,
+        encryption_key,
+        Duration::from_secs(8),
+        Some(Duration::from_secs(3)),
+    )
+}
+
+fn send_with_timeouts(
+    notification: &Notification,
+    settings: &AppSettings,
+    bark_key: &str,
+    encryption_key: Option<&str>,
+    timeout: Duration,
+    connect_timeout: Option<Duration>,
+) -> CoreResult<Value> {
+    let mut builder = reqwest::blocking::Client::builder()
+        .timeout(timeout)
+        .user_agent(concat!("CodexNotify/", env!("CARGO_PKG_VERSION")));
+    if let Some(connect_timeout) = connect_timeout {
+        builder = builder.connect_timeout(connect_timeout);
+    }
+    let client = builder.build().map_err(request_error)?;
     let url = endpoint(&settings.bark_server, bark_key)?;
     let request = if settings.encryption_enabled {
         let key = encryption_key.filter(|v| !v.is_empty()).ok_or_else(|| {
@@ -113,32 +205,10 @@ pub fn send(
     } else {
         client.post(url).json(&payload(notification))
     };
-    let response = request
-        .send()
-        .map_err(|e| CoreError::Network(e.to_string()))?;
+    let response = request.send().map_err(request_error)?;
     let status = response.status();
-    let text = response
-        .text()
-        .map_err(|e| CoreError::Network(e.to_string()))?;
-    if !status.is_success() {
-        return Err(CoreError::Network(format!(
-            "Bark returned HTTP {status}: {}",
-            text.chars().take(200).collect::<String>()
-        )));
-    }
-    let result: Value = if text.is_empty() {
-        json!({})
-    } else {
-        serde_json::from_str(&text).unwrap_or_else(|_| json!({"raw":text}))
-    };
-    if result
-        .get("code")
-        .and_then(Value::as_i64)
-        .is_some_and(|code| code != 200)
-    {
-        return Err(CoreError::Network("Bark rejected the notification".into()));
-    }
-    Ok(result)
+    let text = response.text().map_err(request_error)?;
+    parse_response(status, &text)
 }
 
 #[cfg(test)]
@@ -199,6 +269,80 @@ mod tests {
         };
         let response = send(&notification, &settings, "device-key", None).unwrap();
         assert_eq!(response["code"], 200);
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn classifies_invalid_device_key_without_leaking_it() {
+        let error = parse_response(
+            reqwest::StatusCode::BAD_REQUEST,
+            r#"{"code":400,"message":"failed to get device token: super-secret-key"}"#,
+        )
+        .unwrap_err();
+        assert!(matches!(error, CoreError::BarkInvalidKey));
+        assert!(!error.to_string().contains("super-secret-key"));
+    }
+
+    #[test]
+    fn classifies_rejected_malformed_and_server_responses() {
+        assert!(matches!(
+            parse_response(reqwest::StatusCode::OK, "not-json").unwrap_err(),
+            CoreError::BarkRejected
+        ));
+        assert!(matches!(
+            parse_response(
+                reqwest::StatusCode::OK,
+                r#"{"code":403,"message":"denied"}"#
+            )
+            .unwrap_err(),
+            CoreError::BarkRejected
+        ));
+        assert!(matches!(
+            parse_response(reqwest::StatusCode::INTERNAL_SERVER_ERROR, "oops").unwrap_err(),
+            CoreError::BarkServer
+        ));
+    }
+
+    #[test]
+    fn interactive_test_has_a_bounded_timeout() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (_socket, _) = listener.accept().unwrap();
+            std::thread::sleep(Duration::from_millis(150));
+        });
+        let settings = AppSettings {
+            bark_server: format!("http://{address}"),
+            ..AppSettings::default()
+        };
+        let notification = Notification {
+            event_key: "timeout-test".into(),
+            event_type: "Test".into(),
+            session_id: String::new(),
+            turn_id: String::new(),
+            project: "CodexNotify".into(),
+            cwd: String::new(),
+            title: "Test".into(),
+            subtitle: String::new(),
+            body: "Test".into(),
+            group: "Codex".into(),
+            level: "active".into(),
+            sound: String::new(),
+            icon: String::new(),
+            url: String::new(),
+            suppressed: false,
+            suppress_reason: String::new(),
+        };
+        let error = send_with_timeouts(
+            &notification,
+            &settings,
+            "device-key",
+            None,
+            Duration::from_millis(40),
+            Some(Duration::from_millis(20)),
+        )
+        .unwrap_err();
+        assert!(matches!(error, CoreError::BarkTimeout));
         server.join().unwrap();
     }
 }

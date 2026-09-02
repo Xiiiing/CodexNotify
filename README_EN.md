@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="apps/desktop/src-tauri/icons/app-icon.svg" width="112" alt="CodexNotify Logo">
+  <img src="apps/desktop/src/assets/app-icon.png" width="112" alt="CodexNotify Logo">
   <h1>CodexNotify</h1>
   <p>Send Codex completion and permission alerts to your iPhone and Apple Watch through Bark.</p>
   <p>

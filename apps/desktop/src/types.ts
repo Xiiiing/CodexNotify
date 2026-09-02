@@ -17,3 +17,5 @@ export interface AppState { storage:StorageInfo; settings:AppSettings; counts:Ev
 export interface EventRecord { id:number; eventKey:string; eventType:string; project:string; title:string; subtitle:string; body:string; status:EventStatus; attempts:number; nextAttemptAt:number; createdAt:number; sentAt?:number; error:string }
 export interface Diagnostics { storage:StorageInfo; settingsReadable:boolean; databaseReady:boolean; credentialStoreAvailable:boolean; hook:HookStatus; hookBinary:string; hookBinaryExists:boolean; health:Record<string,unknown> }
 export interface ApiError { code:string; message:string }
+export interface TestBarkInput { settings:AppSettings; barkKey?:string; encryptionKey?:string }
+export interface TestBarkResult { ok:true; elapsedMs:number }

@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="apps/desktop/src-tauri/icons/app-icon.svg" width="112" alt="CodexNotify Logo">
+  <img src="apps/desktop/src/assets/app-icon.png" width="112" alt="CodexNotify Logo">
   <h1>CodexNotify</h1>
   <p>把 Codex 的任务完成与权限请求，通过 Bark 推送到 iPhone 和 Apple Watch。</p>
   <p>

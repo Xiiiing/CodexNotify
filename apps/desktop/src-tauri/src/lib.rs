@@ -5,7 +5,7 @@ use codex_notify_core::{
     bark, dispatch_due, AppPaths, AppSettings, EventCounts, EventRecord, EventStatus, EventStore,
     Notification, StorageInfo, StorageMode,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -53,6 +53,21 @@ struct Diagnostics {
     hook_binary: String,
     hook_binary_exists: bool,
     health: serde_json::Value,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TestBarkInput {
+    settings: AppSettings,
+    bark_key: Option<String>,
+    encryption_key: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TestBarkResult {
+    ok: bool,
+    elapsed_ms: u128,
 }
 
 type CommandResult<T> = Result<T, ApiError>;
@@ -196,37 +211,66 @@ fn delete_secret(kind: String) -> CommandResult<()> {
 }
 
 #[tauri::command]
-fn test_notification(state: State<'_, Backend>) -> CommandResult<serde_json::Value> {
-    api((|| {
-        let settings = AppSettings::load(&state.paths)?;
-        let key = security::get_secret(BARK_KEY_ACCOUNT)?.ok_or_else(|| {
-            codex_notify_core::CoreError::InvalidConfig("Bark device key is missing".into())
-        })?;
-        let encryption = if settings.encryption_enabled {
-            security::get_secret(ENCRYPTION_KEY_ACCOUNT)?
-        } else {
-            None
-        };
-        let notification = Notification {
-            event_key: "manual-test".into(),
-            event_type: "Test".into(),
-            session_id: String::new(),
-            turn_id: String::new(),
-            project: "CodexNotify".into(),
-            cwd: String::new(),
-            title: "✅ CodexNotify".into(),
-            subtitle: "Test notification".into(),
-            body: "Your CodexNotify connection is working.".into(),
-            group: settings.group.clone(),
-            level: settings.level.clone(),
-            sound: settings.sound.clone(),
-            icon: settings.bark_icon.clone(),
-            url: settings.click_url.clone(),
-            suppressed: false,
-            suppress_reason: String::new(),
-        };
-        bark::send(&notification, &settings, &key, encryption.as_deref())
-    })())
+async fn test_bark_connection(input: TestBarkInput) -> CommandResult<TestBarkResult> {
+    tauri::async_runtime::spawn_blocking(
+        move || -> codex_notify_core::CoreResult<TestBarkResult> {
+            let started = std::time::Instant::now();
+            input.settings.validate()?;
+            let key = match input.bark_key.filter(|value| !value.trim().is_empty()) {
+                Some(value) => Some(value.trim().to_owned()),
+                None => security::get_secret(BARK_KEY_ACCOUNT)?,
+            }
+            .ok_or(codex_notify_core::CoreError::BarkInvalidKey)?;
+            let encryption = if input.settings.encryption_enabled {
+                match input.encryption_key.filter(|value| !value.is_empty()) {
+                    Some(value) => Some(value),
+                    None => security::get_secret(ENCRYPTION_KEY_ACCOUNT)?,
+                }
+            } else {
+                None
+            };
+            let chinese = input.settings.language == "zh";
+            let notification = Notification {
+                event_key: "manual-test".into(),
+                event_type: "Test".into(),
+                session_id: String::new(),
+                turn_id: String::new(),
+                project: "CodexNotify".into(),
+                cwd: String::new(),
+                title: "✅ CodexNotify".into(),
+                subtitle: if chinese {
+                    "测试通知"
+                } else {
+                    "Test notification"
+                }
+                .into(),
+                body: if chinese {
+                    "CodexNotify 连接测试成功。"
+                } else {
+                    "Your CodexNotify connection is working."
+                }
+                .into(),
+                group: input.settings.group.clone(),
+                level: input.settings.level.clone(),
+                sound: input.settings.sound.clone(),
+                icon: input.settings.bark_icon.clone(),
+                url: input.settings.click_url.clone(),
+                suppressed: false,
+                suppress_reason: String::new(),
+            };
+            bark::send_test(&notification, &input.settings, &key, encryption.as_deref())?;
+            Ok(TestBarkResult {
+                ok: true,
+                elapsed_ms: started.elapsed().as_millis(),
+            })
+        },
+    )
+    .await
+    .map_err(|_| ApiError {
+        code: "barkUnreachable",
+        message: "the Bark test task could not be completed".into(),
+    })?
+    .map_err(Into::into)
 }
 
 #[tauri::command]
@@ -356,6 +400,7 @@ fn create_tray(app: &AppHandle) -> tauri::Result<()> {
     let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&open, &enabled, &quit])?;
     TrayIconBuilder::with_id("main")
+        .icon(app.default_window_icon().expect("application icon").clone())
         .menu(&menu)
         .tooltip("CodexNotify")
         .on_menu_event(|app, event| match event.id.as_ref() {
@@ -474,7 +519,7 @@ pub fn run() {
             get_secret_status,
             set_secret,
             delete_secret,
-            test_notification,
+            test_bark_connection,
             list_events,
             retry_event,
             retry_failed,

@@ -6,6 +6,7 @@ node_modules/
 dist/
 apps/desktop/src-tauri/binaries/
 apps/desktop/src-tauri/gen/
+apps/desktop/src-tauri/gen.root-cache/
 
 # Editor and OS files
 .DS_Store
