@@ -206,6 +206,9 @@ impl AppPaths {
     pub fn health_file(&self) -> PathBuf {
         self.data_dir.join("hook-health.json")
     }
+    pub fn diagnostic_health_file(&self) -> PathBuf {
+        self.data_dir.join("hook-diagnostic.json")
+    }
 
     pub fn from_root(root: impl AsRef<Path>) -> Self {
         let root = root.as_ref();

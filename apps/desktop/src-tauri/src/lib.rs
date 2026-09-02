@@ -70,6 +70,16 @@ struct TestBarkResult {
     elapsed_ms: u128,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TestHookResult {
+    ok: bool,
+    elapsed_ms: u128,
+    delivery_status: String,
+    error_code: String,
+    message: String,
+}
+
 type CommandResult<T> = Result<T, ApiError>;
 fn api<T>(value: codex_notify_core::CoreResult<T>) -> CommandResult<T> {
     value.map_err(Into::into)
@@ -92,6 +102,13 @@ fn read_health(paths: &AppPaths) -> serde_json::Value {
     std::fs::read(paths.health_file())
         .ok()
         .and_then(|v| serde_json::from_slice(&v).ok())
+        .unwrap_or_else(|| serde_json::json!({}))
+}
+
+fn read_diagnostic_health(paths: &AppPaths) -> serde_json::Value {
+    std::fs::read(paths.diagnostic_health_file())
+        .ok()
+        .and_then(|value| serde_json::from_slice(&value).ok())
         .unwrap_or_else(|| serde_json::json!({}))
 }
 
@@ -271,6 +288,95 @@ async fn test_bark_connection(input: TestBarkInput) -> CommandResult<TestBarkRes
         message: "the Bark test task could not be completed".into(),
     })?
     .map_err(Into::into)
+}
+
+#[tauri::command]
+async fn test_hook_delivery(state: State<'_, Backend>) -> CommandResult<TestHookResult> {
+    let binary = state.hook_binary.clone();
+    let paths = state.paths.clone();
+    tauri::async_runtime::spawn_blocking(move || -> CommandResult<TestHookResult> {
+        let started = std::time::Instant::now();
+        let turn_id = format!(
+            "codex-notify-diagnostic-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis()
+        );
+        let input = serde_json::to_vec(&serde_json::json!({
+            "hook_event_name": "Stop",
+            "session_id": "codex-notify-diagnostic",
+            "turn_id": turn_id,
+            "cwd": std::env::current_dir().unwrap_or_default(),
+            "last_assistant_message": "CodexNotify end-to-end Hook delivery test.",
+            "diagnostic": true
+        }))
+        .map_err(|error| ApiError {
+            code: "invalidJson",
+            message: error.to_string(),
+        })?;
+        let mut child = std::process::Command::new(&binary)
+            .arg(codex_notify_core::hooks::NEW_MARKER)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .map_err(|error| ApiError {
+                code: "hookExecutionError",
+                message: error.to_string(),
+            })?;
+        use std::io::Write;
+        child
+            .stdin
+            .take()
+            .ok_or(ApiError {
+                code: "hookExecutionError",
+                message: "Hook stdin is unavailable".into(),
+            })?
+            .write_all(&input)
+            .map_err(|error| ApiError {
+                code: "hookExecutionError",
+                message: error.to_string(),
+            })?;
+        child.wait().map_err(|error| ApiError {
+            code: "hookExecutionError",
+            message: error.to_string(),
+        })?;
+        let health = read_diagnostic_health(&paths);
+        let matching =
+            health.get("turnId").and_then(serde_json::Value::as_str) == Some(turn_id.as_str());
+        let status = health
+            .get("status")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("error");
+        let delivery_status = health
+            .get("deliveryStatus")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("unknown")
+            .to_owned();
+        let error_code = health
+            .get("errorCode")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or(if matching { "" } else { "hookNotInvoked" })
+            .to_owned();
+        let message = health
+            .get("message")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("")
+            .to_owned();
+        Ok(TestHookResult {
+            ok: matching && status == "success" && delivery_status == "sent",
+            elapsed_ms: started.elapsed().as_millis(),
+            delivery_status,
+            error_code,
+            message,
+        })
+    })
+    .await
+    .map_err(|_| ApiError {
+        code: "hookExecutionError",
+        message: "the Hook test task could not be completed".into(),
+    })?
 }
 
 #[tauri::command]
@@ -520,6 +626,7 @@ pub fn run() {
             set_secret,
             delete_secret,
             test_bark_connection,
+            test_hook_delivery,
             list_events,
             retry_event,
             retry_failed,

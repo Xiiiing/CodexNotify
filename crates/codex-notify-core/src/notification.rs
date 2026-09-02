@@ -24,6 +24,8 @@ pub struct HookEvent {
     pub tool_name: String,
     #[serde(default, alias = "toolInput")]
     pub tool_input: Value,
+    #[serde(default)]
+    pub diagnostic: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { AppSettings, AppState, Diagnostics, EventRecord, EventStatus, HookStatus, SecretStatus, StorageMode, TestBarkInput, TestBarkResult } from "./types";
+import type { AppSettings, AppState, Diagnostics, EventRecord, EventStatus, HookStatus, SecretStatus, StorageMode, TestBarkInput, TestBarkResult, TestHookResult } from "./types";
 
 export const api = {
   state: () => invoke<AppState>("get_app_state"),
@@ -10,6 +10,7 @@ export const api = {
   setSecret: (kind:string,value:string) => invoke<void>("set_secret",{kind,value}),
   deleteSecret: (kind:string) => invoke<void>("delete_secret",{kind}),
   testBark: (input:TestBarkInput) => invoke<TestBarkResult>("test_bark_connection",{input}),
+  testHook: () => invoke<TestHookResult>("test_hook_delivery"),
   events: (status?:EventStatus) => invoke<EventRecord[]>("list_events",{limit:100,status:status||null}),
   retry: (id:number) => invoke<number>("retry_event",{id}),
   retryFailed: () => invoke<number>("retry_failed"),

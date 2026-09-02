@@ -63,6 +63,10 @@ impl EventStatus {
             _ => Self::Queued,
         }
     }
+
+    pub fn label(self) -> &'static str {
+        self.as_str()
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -231,6 +235,17 @@ impl EventStore {
                 .collect::<Result<Vec<_>, _>>()?
         };
         Ok(rows)
+    }
+
+    pub fn get(&self, id: i64) -> CoreResult<Option<EventRecord>> {
+        self.connect()?
+            .query_row(
+                "SELECT id,event_key,event_type,project,title,subtitle,body,status,attempts,next_attempt_at,created_at,sent_at,error,payload_json FROM events WHERE id=?",
+                [id],
+                map_record,
+            )
+            .optional()
+            .map_err(Into::into)
     }
 
     pub fn retry(&self, id: Option<i64>) -> CoreResult<usize> {
